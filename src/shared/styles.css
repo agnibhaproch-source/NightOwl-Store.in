@@ -1,0 +1,773 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   THEME VARIABLES
+   ========================================================= */
+
+:root,
+[data-theme='dark'] {
+  --bg: 8 8 13;
+  --surface: 17 17 27;
+  --surface-2: 27 26 41;
+  --line: 46 44 68;
+  --fg: 243 241 255;
+  --muted: 153 149 181;
+
+  --violet: 155 107 255;
+  --cyan: 62 230 255;
+  --lime: 198 255 61;
+  --pink: 255 77 141;
+  --amber: 255 190 60;
+
+  --accent: 198 255 61;
+  --on-accent: 13 16 4;
+
+  --shadow-soft:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 14px 34px -18px rgb(0 0 0 / 0.8);
+
+  --blob-opacity: 0.42;
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg: 246 245 251;
+  --surface: 255 255 255;
+  --surface-2: 239 237 248;
+  --line: 225 222 238;
+  --fg: 20 18 38;
+  --muted: 98 94 126;
+
+  --violet: 108 58 226;
+  --cyan: 0 128 158;
+  --lime: 62 116 0;
+  --pink: 206 30 98;
+  --amber: 160 98 0;
+
+  --accent: 160 232 40;
+  --on-accent: 14 20 2;
+
+  --shadow-soft:
+    0 1px 2px rgb(20 18 38 / 0.04),
+    0 14px 30px -18px rgb(60 40 120 / 0.28);
+
+  --blob-opacity: 0.25;
+
+  color-scheme: light;
+}
+
+
+/* =========================================================
+   BASE
+   ========================================================= */
+
+@layer base {
+
+  html {
+    position: relative;
+    min-height: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+
+    /*
+      Native scrolling is intentionally used.
+      This is much smoother than forcing a JS scroll system
+      for a normal application.
+    */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg font-body text-fg antialiased;
+
+    margin: 0;
+    min-height: 100%;
+    font-size: 15px;
+    line-height: 1.5;
+
+    /*
+      Prevent accidental horizontal movement.
+    */
+    overflow-x: hidden;
+
+    /*
+      Keep vertical scrolling native.
+    */
+    overscroll-behavior-y: none;
+  }
+
+  /*
+    IMPORTANT:
+    Do not put transforms on body/html.
+    They can promote the entire page into an expensive
+    composited layer.
+  */
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display;
+
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--cyan));
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgb(var(--violet) / 0.35);
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+
+  /*
+    Lenis compatibility.
+    If Lenis is not actually being used, these rules have
+    essentially no effect.
+  */
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  .lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+
+  .lenis.lenis-stopped {
+    overflow: hidden;
+  }
+}
+
+
+/* =========================================================
+   COMPONENTS
+   ========================================================= */
+
+@layer components {
+
+  /*
+    Standard card.
+  */
+  .card {
+    @apply rounded-card border border-line/70 bg-surface;
+
+    box-shadow: var(--shadow-soft);
+  }
+
+
+  /*
+    Glass effect.
+
+    Reduced blur from 18px to 12px.
+    Large backdrop-filter areas can be expensive while scrolling.
+  */
+  .glass {
+    background: rgb(var(--bg) / 0.82);
+
+    -webkit-backdrop-filter:
+      saturate(140%)
+      blur(12px);
+
+    backdrop-filter:
+      saturate(140%)
+      blur(12px);
+  }
+
+  @supports not (
+    (backdrop-filter: blur(1px))
+    or
+    (-webkit-backdrop-filter: blur(1px))
+  ) {
+    .glass {
+      background: rgb(var(--bg) / 0.96);
+    }
+  }
+
+
+  /*
+    Form fields.
+  */
+  .field {
+    @apply block w-full rounded-field border border-line bg-surface2/60 px-3.5 text-fg placeholder:text-muted/80;
+
+    min-height: 46px;
+
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .field:focus {
+    outline: none;
+
+    border-color: rgb(var(--violet));
+
+    box-shadow:
+      0 0 0 3px rgb(var(--violet) / 0.25);
+  }
+
+
+  .field-label {
+    @apply mb-1.5 block text-[13px] font-medium text-muted;
+  }
+
+
+  /*
+    Chips.
+  */
+  .chip {
+    @apply inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface px-3.5 text-sm font-medium text-fg transition-colors;
+  }
+
+  .chip[aria-pressed='true'],
+  .chip[aria-selected='true'] {
+    @apply border-transparent bg-fg text-bg;
+  }
+
+
+  /*
+    Utility classes.
+  */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .price {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+
+  /*
+    Reduced text glow.
+    Huge text-shadow values can cause additional paint work.
+  */
+  .glow-text {
+    text-shadow:
+      0 0 18px rgb(var(--violet) / 0.45);
+  }
+}
+
+
+/* =========================================================
+   BACKGROUND BLOB SYSTEM
+   =========================================================
+
+   IMPORTANT PERFORMANCE CHANGES:
+
+   - Smaller blobs
+   - Lower opacity
+   - Slower animations
+   - transform-only animation
+   - contain: paint
+   - NO filter: blur()
+   - NO backdrop-filter
+   ========================================================= */
+
+.blob-field {
+  position: fixed;
+
+  inset: 0;
+
+  z-index: 0;
+
+  pointer-events: none;
+
+  overflow: hidden;
+
+  /*
+    Prevent the decorative background from affecting
+    layout calculations.
+  */
+  contain: strict;
+
+  /*
+    Tell browser this layer is visual-only.
+  */
+  isolation: isolate;
+}
+
+
+/*
+  Base blob.
+*/
+.blob {
+  position: absolute;
+
+  width: 48vmax;
+  height: 44vmax;
+
+  border-radius:
+    43% 57% 61% 39%
+    /
+    44% 38% 62% 56%;
+
+  opacity: var(--blob-opacity);
+
+  /*
+    Only promote the blobs themselves.
+    Never apply will-change globally.
+  */
+  will-change: transform;
+
+  /*
+    Slow animation reduces CPU/GPU activity.
+  */
+  animation:
+    blob-drift
+    var(--d, 34s)
+    ease-in-out
+    infinite
+    alternate;
+
+  /*
+    Prevent visual overflow from creating extra paint.
+  */
+  contain: paint;
+}
+
+
+/*
+  Violet blob.
+*/
+.blob--violet {
+  background:
+    radial-gradient(
+      closest-side,
+      rgb(var(--violet) / 0.42),
+      rgb(var(--violet) / 0)
+    );
+
+  top: -20vmax;
+  left: -16vmax;
+}
+
+
+/*
+  Cyan blob.
+*/
+.blob--cyan {
+  background:
+    radial-gradient(
+      closest-side,
+      rgb(var(--cyan) / 0.26),
+      rgb(var(--cyan) / 0)
+    );
+
+  top: 32vh;
+  right: -22vmax;
+
+  --d: 38s;
+
+  animation-delay: -10s;
+}
+
+
+/*
+  Pink blob.
+*/
+.blob--pink {
+  background:
+    radial-gradient(
+      closest-side,
+      rgb(var(--pink) / 0.22),
+      rgb(var(--pink) / 0)
+    );
+
+  bottom: -26vmax;
+  left: 12vw;
+
+  --d: 44s;
+
+  animation-delay: -18s;
+}
+
+
+/* =========================================================
+   BLOB ANIMATION
+   ========================================================= */
+
+@keyframes blob-drift {
+
+  0% {
+    transform:
+      translate3d(0, 0, 0)
+      rotate(0deg)
+      scale(1);
+  }
+
+  50% {
+    transform:
+      translate3d(4vmax, 3vmax, 0)
+      rotate(25deg)
+      scale(1.06);
+  }
+
+  100% {
+    transform:
+      translate3d(-3vmax, 5vmax, 0)
+      rotate(55deg)
+      scale(0.97);
+  }
+}
+
+
+/* =========================================================
+   SHIMMER
+   ========================================================= */
+
+.shimmer {
+  position: relative;
+
+  overflow: hidden;
+
+  background: rgb(var(--surface-2));
+
+  /*
+    Keeps the pseudo element inside the component.
+  */
+  contain: paint;
+}
+
+.shimmer::after {
+  content: '';
+
+  position: absolute;
+
+  inset: 0;
+
+  transform: translate3d(-100%, 0, 0);
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--fg) / 0.05),
+      transparent
+    );
+
+  animation:
+    shimmer
+    1.8s
+    linear
+    infinite;
+
+  will-change: transform;
+}
+
+
+@keyframes shimmer {
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+
+/* =========================================================
+   PULSE RING
+   ========================================================= */
+
+@keyframes pulse-ring {
+
+  0% {
+    transform:
+      scale(0.8);
+
+    opacity: 0.65;
+  }
+
+  100% {
+    transform:
+      scale(2);
+
+    opacity: 0;
+  }
+}
+
+.pulse-ring {
+  animation:
+    pulse-ring
+    2.2s
+    ease-out
+    infinite;
+
+  will-change: transform, opacity;
+}
+
+
+/* =========================================================
+   LOGIN PAGE ORBITS
+   =========================================================
+
+   Use these instead of continuously animated
+   Framer Motion elements.
+
+   Example:
+
+   <div className="login-orbit ..." />
+   <div className="login-orbit-reverse ..." />
+   ========================================================= */
+
+.login-orbit {
+  animation:
+    loginOrbit
+    30s
+    linear
+    infinite;
+
+  will-change: transform;
+
+  /*
+    Isolate this animation from the rest of the page.
+  */
+  contain: paint;
+}
+
+
+.login-orbit-reverse {
+  animation:
+    loginOrbitReverse
+    24s
+    linear
+    infinite;
+
+  will-change: transform;
+
+  contain: paint;
+}
+
+
+@keyframes loginOrbit {
+
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+@keyframes loginOrbitReverse {
+
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+
+/* =========================================================
+   PERFORMANCE HELPERS
+   ========================================================= */
+
+/*
+  Apply this to large purely decorative elements.
+*/
+.visual-layer {
+  pointer-events: none;
+
+  contain: paint;
+}
+
+
+/*
+  Apply to animation wrappers when appropriate.
+*/
+.transform-layer {
+  transform: translateZ(0);
+}
+
+
+/*
+  Prevent accidental image layout shifts.
+*/
+img {
+  max-width: 100%;
+}
+
+
+/*
+  Buttons should not cause browser touch delay.
+*/
+button,
+[role='button'] {
+  touch-action: manipulation;
+}
+
+
+/* =========================================================
+   REDUCED MOTION
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+
+    animation-duration: 0.001ms !important;
+
+    animation-iteration-count: 1 !important;
+
+    transition-duration: 0.001ms !important;
+
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* =========================================================
+   MOBILE PERFORMANCE
+   ========================================================= */
+
+@media (max-width: 768px) {
+
+  /*
+    Smaller decorative layers on phones.
+  */
+  .blob {
+    width: 65vmax;
+    height: 58vmax;
+  }
+
+
+  /*
+    Reduce visual complexity on smaller GPUs.
+  */
+  .glass {
+    -webkit-backdrop-filter:
+      saturate(120%)
+      blur(8px);
+
+    backdrop-filter:
+      saturate(120%)
+      blur(8px);
+  }
+
+
+  /*
+    Slightly slower background movement.
+  */
+  .blob {
+    animation-duration: 48s;
+  }
+}
+
+
+/* =========================================================
+   VERY LOW POWER / SMALL DEVICES
+   ========================================================= */
+
+@media (max-width: 480px) {
+
+  .blob-field {
+    /*
+      Keep the background but reduce its visual intensity.
+    */
+    opacity: 0.8;
+  }
+
+  .blob {
+    animation-duration: 55s;
+  }
+}
+
+
+/* =========================================================
+   HIT AREA
+   ========================================================= */
+
+/*
+  Extends small controls to a 44px hit area
+  without changing their visible size.
+*/
+.hit {
+  position: relative;
+}
+
+.hit::after {
+  content: '';
+
+  position: absolute;
+
+  inset: -5px;
+}
+
+
+/* =========================================================
+   FINAL GLOBAL PERFORMANCE RULES
+   ========================================================= */
+
+/*
+  Never use will-change on the entire page.
+
+  Only animated elements should use it.
+*/
+
+html,
+body {
+  max-width: 100%;
+}
+
+
+/*
+  Prevent horizontal overflow caused by
+  animated decorative elements.
+*/
+body {
+  overflow-x: clip;
+}
+
+
+/*
+  Do not use:
+
+  * {
+    transform: translateZ(0);
+  }
+
+  That would actually make scrolling WORSE
+  by promoting too many elements to GPU layers.
+*/

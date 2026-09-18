@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Every tab (customer or admin) signs in anonymously on load (see
+    // src/shared/lib/firebase.ts), so `request.auth != null` just means
+    // "opened through the app" — it does not distinguish admin from
+    // customer. That's a deliberate, disclosed tradeoff for now: it keeps
+    // the database closed to the open internet while the app has no real
+    // customer/admin identity system to key stricter per-document rules on.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
