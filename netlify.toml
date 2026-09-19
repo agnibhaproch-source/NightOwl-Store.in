@@ -1,0 +1,4 @@
+[build.environment]
+  # .firebaserc stores the public Firebase project ID (required by the Firebase CLI),
+  # which matches VITE_FIREBASE_PROJECT_ID and would otherwise fail secrets scanning.
+  SECRETS_SCAN_OMIT_PATHS = ".firebaserc"
