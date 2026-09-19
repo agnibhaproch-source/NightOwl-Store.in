@@ -8,7 +8,7 @@
  */
 import type {
   Address, AdminSession, AppNotification, Banner, BroadcastLog, Category, Coupon, Customer,
-  Order, OrderRating, OrderStatus, Product, StockAlert, StoreSettings, Unsub
+  Order, OrderRating, OrderStatus, Product, Receiver, Rider, RiderIdType, RiderStatus, RiderVehicle, StockAlert, StoreSettings, Unsub, WalletTopup, WalletTxn
 } from '../types';
 
 export class ServiceError extends Error {
@@ -53,7 +53,63 @@ export interface OrderService {
   placeOrder(input: PlaceOrderInput): Promise<Order>;
   updateStatus(id: string, status: OrderStatus, reason?: string): Promise<void>;
   cancelByUser(id: string, userId: string): Promise<void>;
+  /** Admin: the UPI payment showed up in the store's account. Unlocks the order and notifies the customer. */
+  confirmPayment(id: string): Promise<void>;
+  /** Customer abandons an order whose payment was never confirmed. */
+  cancelUnpaid(id: string, userId: string): Promise<void>;
   rateOrder(id: string, rating: OrderRating): Promise<void>;
+  /** Optional Feeding India contribution (0, 2, 5 or 10) on an order that hasn't been paid yet. */
+  setDonation(id: string, userId: string, amount: number): Promise<void>;
+  /** Keeps the delivery contact on a not-yet-accepted order in step with the customer's receiver details. */
+  setReceiver(id: string, userId: string, receiver: Receiver): Promise<void>;
+  /** Admin: hand a paid, accepted order to an approved rider. */
+  assignRider(orderId: string, riderId: string): Promise<void>;
+  /** The 4-digit code the customer reads out to the rider at the door. */
+  getDeliveryCode(orderId: string): Promise<string | null>;
+  sendMessage(orderId: string, from: 'user' | 'rider', text: string): Promise<void>;
+  riderPickup(orderId: string, riderId: string): Promise<void>;
+  riderArrived(orderId: string, riderId: string): Promise<void>;
+  /** Completes the delivery. Fails unless `code` is the customer's delivery code. */
+  riderDeliver(orderId: string, riderId: string, code: string): Promise<void>;
+  /** Pay an unpaid order out of the customer's wallet balance. */
+  payWithWallet(id: string, userId: string): Promise<void>;
+}
+
+export interface RegisterRiderInput {
+  name: string;
+  phone: string;
+  email: string;
+  password: string;
+  vehicle: RiderVehicle;
+  vehicleNumber?: string;
+  idType: RiderIdType;
+  idNumber: string;
+  emergencyName: string;
+  emergencyPhone: string;
+  area?: string;
+  photo?: string;
+}
+
+export interface RiderService {
+  watchRiders: Watch<Rider[]>;
+  watchRider(id: string, cb: (r: Rider | null) => void): Unsub;
+  watchRiderOrders(riderId: string, cb: (o: Order[]) => void): Unsub;
+  register(input: RegisterRiderInput): Promise<Rider>;
+  login(email: string, password: string): Promise<Rider>;
+  logout(): Promise<void>;
+  /** Admin: approve, reject or suspend a rider. */
+  setStatus(id: string, status: RiderStatus, reason?: string): Promise<void>;
+  setOnline(id: string, online: boolean): Promise<void>;
+}
+
+export interface WalletService {
+  watchTopups: Watch<WalletTopup[]>;
+  watchUserTopups(userId: string, cb: (t: WalletTopup[]) => void): Unsub;
+  watchUserTxns(userId: string, cb: (t: WalletTxn[]) => void): Unsub;
+  createTopup(userId: string, amount: number): Promise<WalletTopup>;
+  /** Admin: the GPay payment landed. Credits the customer's wallet. */
+  confirmTopup(id: string): Promise<void>;
+  cancelTopup(id: string, userId: string): Promise<void>;
 }
 
 export interface NotificationService {
@@ -87,15 +143,18 @@ export interface CustomerService {
   watchCustomer(id: string, cb: (c: Customer | null) => void): Unsub;
   getCustomer(id: string): Promise<Customer | null>;
   saveProfile(c: Customer): Promise<void>;
+  saveReceiver(userId: string, receiver: Receiver): Promise<void>;
   saveAddress(userId: string, a: Address, makeDefault?: boolean): Promise<void>;
   deleteAddress(userId: string, addressId: string): Promise<void>;
   setBlocked(id: string, blocked: boolean): Promise<void>;
 }
 
 export interface AuthService {
-  requestOtp(phone: string): Promise<{ devCode: string }>;
+  /** `devCode` is only returned by the mock backend and the dev-only demo account; real SMS never exposes the code. */
+  requestOtp(phone: string): Promise<{ devCode?: string }>;
   verifyOtp(phone: string, code: string): Promise<{ customer: Customer | null }>;
   adminLogin(email: string, password: string): Promise<AdminSession>;
+  adminLogout(): Promise<void>;
 }
 
 export interface SystemService {
@@ -114,6 +173,8 @@ export interface Services {
   coupons: CouponService;
   banners: BannerService;
   customers: CustomerService;
+  wallet: WalletService;
+  riders: RiderService;
   auth: AuthService;
   system: SystemService;
 }

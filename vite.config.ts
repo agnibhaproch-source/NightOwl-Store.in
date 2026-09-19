@@ -18,6 +18,8 @@ export default defineConfig({
         background_color: '#08080d',
         display: 'standalone',
         orientation: 'portrait',
+        id: '/',
+        lang: 'en-IN',
         start_url: '/',
         scope: '/',
         categories: ['food', 'shopping'],
@@ -27,8 +29,7 @@ export default defineConfig({
           { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ],
         shortcuts: [
-          { name: 'My orders', url: '/orders', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
-          { name: 'Admin', url: '/admin', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] }
+          { name: 'My orders', url: '/orders', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] }
         ]
       },
       workbox: {

@@ -51,7 +51,7 @@ function NotifyButton({ p }: { p: Product }) {
       )}
     >
       {on ? <BellRing className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
-      {on ? 'Alert on' : 'Notify'}
+      {on ? 'You’ll be told' : 'Notify me'}
     </motion.button>
   );
 }

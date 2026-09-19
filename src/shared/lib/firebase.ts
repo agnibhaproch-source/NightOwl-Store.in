@@ -11,13 +11,26 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
+/**
+ * Each part of the product gets its own Firebase app, and therefore its own saved sign-in.
+ * Customers, the owner (/admin) and riders (/rider) can be signed in at the same time in one browser,
+ * and signing out of one never touches the others. Every page load is exactly one of the three.
+ */
+export type Role = 'user' | 'admin' | 'rider';
+export const role: Role = /^\/admin(\/|$)/.test(location.pathname) ? 'admin' : /^\/rider(\/|$)/.test(location.pathname) ? 'rider' : 'user';
+// The customer app keeps the default app name so existing customer sessions survive.
+const app = role === 'user' ? initializeApp(firebaseConfig) : initializeApp(firebaseConfig, role);
 
 export const auth = getAuth(app);
 // The app's types have many optional fields (couponCode, cancelReason, rating, ...) that get
 // constructed as literal `undefined`. Firestore rejects `undefined` unless told to ignore it,
 // so this keeps every existing object shape writable without touching each call site.
 export const firestore = initializeFirestore(app, { ignoreUndefinedProperties: true });
+
+// Dev-only: lets automated tests use Firebase's registered test phone numbers without a captcha.
+if (import.meta.env.DEV && localStorage.getItem('no:skip-recaptcha') === '1') {
+  auth.settings.appVerificationDisabledForTesting = true;
+}
 
 export default app;
 
@@ -33,21 +46,34 @@ export default app;
  * retries every few seconds so an already-open tab recovers on its own the
  * moment the provider is turned on, with no page reload needed.
  */
+let signingIn = false;
 function trySignInAnonymously() {
-  signInAnonymously(auth).catch((err) => {
-    console.error('[firebase] anonymous sign-in failed — Firestore reads/writes are rejected until this succeeds. Enable the Anonymous provider in Firebase Console > Authentication > Sign-in method.', err);
-    setTimeout(trySignInAnonymously, 4000);
-  });
+  if (signingIn) return;
+  signingIn = true;
+  signInAnonymously(auth)
+    .catch((err) => {
+      console.error('[firebase] anonymous sign-in failed — Firestore reads/writes are rejected until this succeeds. Enable the Anonymous provider in Firebase Console > Authentication > Sign-in method.', err);
+      setTimeout(() => {
+        signingIn = false;
+        if (!auth.currentUser) trySignInAnonymously();
+      }, 4000);
+    })
+    .finally(() => {
+      if (auth.currentUser) signingIn = false;
+    });
 }
-trySignInAnonymously();
 
 let resolveAuthReady: () => void;
 export const authReady = new Promise<void>((resolve) => {
   resolveAuthReady = resolve;
 });
+// Wait for Firebase to restore any saved sign-in (owner, phone, Google) before deciding to go anonymous;
+// signing in anonymously up front would silently replace it.
 const stopAuthWatch = onAuthStateChanged(auth, (user) => {
   if (user) {
     resolveAuthReady();
     stopAuthWatch();
+  } else {
+    trySignInAnonymously();
   }
 });

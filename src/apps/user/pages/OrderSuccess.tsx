@@ -67,7 +67,8 @@ export default function OrderSuccess() {
             </div>
             <div className="flex items-center gap-3 text-sm"><Clock className="h-4 w-4 text-lime" /> Arriving in about <b>{order.etaMinutes} min</b></div>
             <div className="flex items-center gap-3 text-sm"><MapPin className="h-4 w-4 text-cyan" /> {addressLine(order.address, settings.hostels)}</div>
-            <div className="flex items-center gap-3 text-sm"><Banknote className="h-4 w-4 text-violet" /> Paid <b>{inr(order.bill.grandTotal)}</b> via UPI</div>
+            {!!order.bill.donation && <div className="flex items-center gap-3 text-sm"><span aria-hidden>💛</span> Thank you for adding <b>{inr(order.bill.donation)}</b> for Feeding India</div>}
+            <div className="flex items-center gap-3 text-sm"><Banknote className="h-4 w-4 text-violet" /> Paid <b>{inr(order.bill.grandTotal)}</b> {order.paymentMode === 'wallet' ? 'from your wallet' : 'via UPI'}</div>
           </div>
         )}
         {perm === 'default' && (

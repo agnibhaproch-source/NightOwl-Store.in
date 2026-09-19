@@ -59,20 +59,6 @@ export default function Login() {
           <p className="min-h-[20px] text-sm text-pink" role="alert">{err}</p>
           <Button type="submit" variant="primary" size="lg" block loading={busy}>Sign in</Button>
         </form>
-        <div className="mt-6 rounded-2xl border border-dashed border-line p-3 text-[13px]">
-          <p className="mb-2 font-semibold text-muted">Demo accounts</p>
-          {APP.admins.map((a) => (
-            <button
-              key={a.email}
-              type="button"
-              onClick={() => { setEmail(a.email); setPassword(a.password); }}
-              className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left hover:bg-surface2"
-            >
-              <span><b className="capitalize">{a.role}</b> <span className="text-muted">· {a.email}</span></span>
-              <span className="text-violet">Use</span>
-            </button>
-          ))}
-        </div>
         <a href="/" className="mt-4 block text-center text-sm text-muted hover:text-fg">← Back to {APP.name}</a>
       </motion.div>
     </main>

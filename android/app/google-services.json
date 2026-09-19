@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "207578120970",
+    "project_id": "nightowl-46380",
+    "storage_bucket": "nightowl-46380.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:207578120970:android:836f7b17306587c9b570f3",
+        "android_client_info": {
+          "package_name": "com.nightowl.hostel"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "207578120970-0iblm6pgfi8seiovvgi9gc42kdbdkem9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nightowl.hostel",
+            "certificate_hash": "ba6be6f0b42c883015529158cb687806e351c165"
+          }
+        },
+        {
+          "client_id": "207578120970-4p3ulp5h5d3jifkvm6k8lsn4veu13or0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nightowl.hostel",
+            "certificate_hash": "ed6525c113872fb37ca778fa1ee8efeeab5112a6"
+          }
+        },
+        {
+          "client_id": "207578120970-of62vc0k4pijrvdo26gq8oke62cdpc5d.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBuD3MeTpGiollnWDDteN6XwGO8Nq-JVX8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "207578120970-of62vc0k4pijrvdo26gq8oke62cdpc5d.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

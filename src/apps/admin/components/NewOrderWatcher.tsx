@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useOrders } from '@/shared/hooks/live';
+import { useOrders, useTopups } from '@/shared/hooks/live';
+import { services } from '@/shared/services';
 import { chime } from '@/shared/lib/sound';
 import { toast } from '@/shared/store/toast';
 import { inr } from '@/shared/lib/format';
@@ -9,10 +10,42 @@ import { useAdminUi } from '../store/ui';
 import { APP } from '@/shared/config/app';
 
 /** Chimes, toasts and flashes the tab title when a new order lands. */
+const UNPAID_EXPIRY = 20 * 60_000;
+
 export function NewOrderWatcher() {
   const [orders, loading] = useOrders();
+  const ordersRef = useRef(orders);
+  ordersRef.current = orders;
+
+  // Customers who start checkout but never pay would hold stock forever. Release those after 20 minutes.
+  useEffect(() => {
+    const sweep = () => {
+      ordersRef.current
+        .filter((o) => o.status === 'placed' && o.paymentStatus === 'pending' && Date.now() - o.createdAt > UNPAID_EXPIRY)
+        .forEach((o) => void services.orders.updateStatus(o.id, 'cancelled', 'Payment not completed').catch(() => undefined));
+    };
+    sweep();
+    const t = setInterval(sweep, 60_000);
+    return () => clearInterval(t);
+  }, []);
   const known = useRef<Set<string> | null>(null);
   const flash = useRef<ReturnType<typeof setInterval>>();
+  const [topups, topupsLoading] = useTopups();
+  const knownTopups = useRef<Set<string> | null>(null);
+
+  useEffect(() => {
+    if (topupsLoading) return;
+    if (!knownTopups.current) {
+      knownTopups.current = new Set(topups.map((t) => t.id));
+      return;
+    }
+    const fresh = topups.filter((t) => !knownTopups.current!.has(t.id));
+    topups.forEach((t) => knownTopups.current!.add(t.id));
+    fresh.forEach((t) => {
+      if (useAdmin.getState().sound) chime();
+      toast({ title: `Wallet top-up ${t.code}`, body: `${t.customerName} · ${inr(t.amount)} · confirm once it lands`, emoji: '💰', duration: 8000 });
+    });
+  }, [topups, topupsLoading]);
 
   useEffect(() => {
     if (loading) return;

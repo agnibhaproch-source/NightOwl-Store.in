@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Ban, Check, Clock, FlaskConical, LayoutGrid, List, MessageSquareText, Printer, Search } from 'lucide-react';
+import { Ban, Bike, Check, Clock, FlaskConical, LayoutGrid, List, MessageSquareText, Printer, Search } from 'lucide-react';
 import { useCustomers, useOrders, useProducts, useSettings } from '@/shared/hooks/live';
 import { useNow } from '@/shared/hooks/misc';
 import { Badge, Button, EmptyState, Segmented, Select, Skeleton } from '@/shared/ui';
@@ -10,10 +10,10 @@ import { fmtDateTime, fmtTime, inr, timeAgo, toDateInput } from '@/shared/lib/fo
 import { services, errorMessage } from '@/shared/services';
 import { toast } from '@/shared/store/toast';
 import { mulberry32 } from '@/shared/lib/format';
-import { STATUS_LABEL, type Order, type OrderStatus } from '@/shared/types';
+import { STATUS_LABEL, isPaid, type Order, type OrderStatus } from '@/shared/types';
 import { useAdminUi } from '../store/ui';
 import { PageTitle, Panel } from '../components/Layout';
-import { NEXT_LABEL, moveOrder, nextStatus, printSlip, rejectOrder } from '../components/orderActions';
+import { NEXT_LABEL, awaitingPayment, markPaid, moveOrder, nextStatus, printSlip, rejectOrder } from '../components/orderActions';
 import { STATUS_TONE } from '../components/OrderDrawer';
 
 type Range = 'tonight' | 'week' | 'all' | 'date';
@@ -30,6 +30,8 @@ function OrderCard({ o, now, hostel }: { o: Order; now: number; hostel: string }
   const openOrder = useAdminUi((s) => s.openOrder);
   const [settings] = useSettings();
   const next = nextStatus(o.status);
+  const unpaid = awaitingPayment(o);
+  const canAssign = !unpaid && (o.status === 'accepted' || o.status === 'packing');
   const waiting = now - o.createdAt;
   const urgent = o.status === 'placed' && waiting > 3 * 60_000;
   const live = o.status !== 'delivered' && o.status !== 'cancelled';
@@ -58,6 +60,7 @@ function OrderCard({ o, now, hostel }: { o: Order; now: number; hostel: string }
         <div className="flex items-center justify-between gap-2">
           <span className="font-display text-[17px] font-extrabold">#{o.id}</span>
           <span className="rounded-md bg-violet/15 px-1.5 py-0.5 font-display text-[12px] font-extrabold tracking-[0.15em] text-violet">{o.shortCode}</span>
+          <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider', isPaid(o) ? 'bg-lime/15 text-lime' : 'bg-amber/20 text-amber')}>{isPaid(o) ? 'Paid' : 'Unpaid'}</span>
           <span className={cn('flex items-center gap-1 text-[12px] font-semibold', urgent ? 'text-pink' : 'text-muted')}>
             <Clock className="h-3 w-3" /> {live ? timeAgo(o.createdAt, now) : fmtTime(o.updatedAt)}
           </span>
@@ -65,6 +68,9 @@ function OrderCard({ o, now, hostel }: { o: Order; now: number; hostel: string }
         <p className="mt-1 truncate text-sm font-semibold">{o.customerName}</p>
         <p className="font-display text-[15px] font-bold text-cyan">{hostel} · {o.address.block}-{o.address.room}</p>
         <p className="mt-1 line-clamp-2 text-[12px] text-muted">{o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}</p>
+        {(o.status === 'accepted' || o.status === 'packing' || o.status === 'out_for_delivery') && (
+          <p className={cn('mt-1.5 flex items-center gap-1 text-[12px] font-semibold', o.rider ? 'text-cyan' : 'text-amber')}><Bike className="h-3 w-3" /> {o.rider ? `${o.rider.name}${o.arrivedAt ? ' · at the door' : ''}` : 'No rider yet'}</p>
+        )}
         {o.instructions && (
           <p className="mt-1.5 flex items-start gap-1 text-[12px] text-amber"><MessageSquareText className="mt-0.5 h-3 w-3 shrink-0" /> <span className="line-clamp-1">{o.instructions}</span></p>
         )}
@@ -86,10 +92,21 @@ function OrderCard({ o, now, hostel }: { o: Order; now: number; hostel: string }
               <Printer className="h-4 w-4" />
             </button>
           )}
-          {next && (
-            <Button size="sm" block variant={o.status === 'placed' ? 'primary' : 'secondary'} className="h-10" icon={<Check className="h-4 w-4" />} onClick={() => moveOrder(o, next)}>
-              {NEXT_LABEL[o.status]}
+          {canAssign && (
+            <button onClick={() => useAdminUi.getState().openAssign(o.id)} aria-label={`${o.riderId ? 'Change' : 'Assign'} rider for ${o.id}`} className={cn('grid h-10 shrink-0 place-items-center rounded-xl border px-2.5', o.riderId ? 'border-line hover:bg-surface2' : 'border-amber/60 text-amber hover:bg-amber/10')}>
+              <Bike className="h-4 w-4" />
+            </button>
+          )}
+          {unpaid ? (
+            <Button size="sm" block variant="primary" className="h-10" icon={<Check className="h-4 w-4" />} onClick={() => markPaid(o)}>
+              Confirm payment {inr(o.bill.grandTotal)}
             </Button>
+          ) : (
+            next && (
+              <Button size="sm" block variant={o.status === 'placed' ? 'primary' : 'secondary'} className="h-10" icon={<Check className="h-4 w-4" />} onClick={() => moveOrder(o, next)}>
+                {NEXT_LABEL[o.status]}
+              </Button>
+            )
           )}
         </div>
       )}
@@ -169,6 +186,7 @@ export default function Orders() {
     const t = q.trim().toLowerCase().replace(/^#/, '');
     return orders
       .filter((o) => {
+        if (o.cancelReason === 'Payment not completed') return false;
         const live = o.status !== 'delivered' && o.status !== 'cancelled';
         if (range === 'tonight' && !live && o.createdAt < start) return false;
         if (range === 'week' && o.createdAt < start - 6 * DAY) return false;

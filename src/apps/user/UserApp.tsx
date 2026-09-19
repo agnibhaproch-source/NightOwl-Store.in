@@ -13,6 +13,9 @@ import { FlyLayer } from './components/FlyLayer';
 import { ProductSheet } from './components/ProductSheet';
 import { StoreBanner } from './components/StoreBanner';
 import { NotificationBridge } from './components/NotificationBridge';
+import { IosInstallBanner } from './components/IosInstallBanner';
+import { ReceiverPrompt } from './components/ReceiverPrompt';
+import { ActiveOrderBar } from './components/ActiveOrderBar';
 import { PullToRefresh } from './components/PullToRefresh';
 import { useSession } from './store/session';
 import { useCart } from './store/cart';
@@ -24,6 +27,9 @@ const CategoryPage = lazy(() => import('./pages/Category'));
 const Search = lazy(() => import('./pages/Search'));
 const Cart = lazy(() => import('./pages/Cart'));
 const Checkout = lazy(() => import('./pages/Checkout'));
+const GetApp = lazy(() => import('./pages/GetApp'));
+const Support = lazy(() => import('./pages/Support'));
+const Settings = lazy(() => import('./pages/Settings'));
 const OrderSuccess = lazy(() => import('./pages/OrderSuccess'));
 const Orders = lazy(() => import('./pages/Orders'));
 const OrderDetail = lazy(() => import('./pages/OrderDetail'));
@@ -165,6 +171,10 @@ export default function UserApp() {
               <Route path="/search" element={<Search />} />
               <Route path="/cart" element={<Cart />} />
               <Route path="/checkout" element={<Checkout />} />
+              <Route path="/get-app" element={<GetApp />} />
+              <Route path="/support" element={<Support />} />
+              <Route path="/wallet" element={<Navigate to="/" replace />} />
+              <Route path="/settings" element={<Settings />} />
               <Route path="/order-success/:id" element={<OrderSuccess />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<OrderDetail />} />
@@ -182,6 +192,9 @@ export default function UserApp() {
       </PullToRefresh>
       {!chromeless && (
         <>
+          <ReceiverPrompt />
+          <IosInstallBanner />
+          <ActiveOrderBar />
           <CartBar />
           <BottomNav />
         </>

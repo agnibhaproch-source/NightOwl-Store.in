@@ -38,6 +38,7 @@ export default function Help() {
           </a>
         ))}
       </section>
+      <Link to="/support" className="card mt-3 flex items-center justify-between p-4 font-semibold">Write to customer care <span className="text-violet">Open</span></Link>
       <h2 className="mb-3 mt-8 text-[22px] font-extrabold">FAQ</h2>
       <ul className="card divide-y divide-line/50 overflow-hidden">
         {faqs.map((f, i) => {

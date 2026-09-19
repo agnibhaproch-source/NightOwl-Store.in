@@ -86,7 +86,12 @@ export function useCurrentUser() {
     if (!userId || loading || customer || recovering.has(userId)) return;
     recovering.add(userId);
     services.customers
-      .saveProfile({ id: userId, name: 'Night Owl', phone: '', addresses: [], blocked: false, joinedAt: Date.now() })
+      .getCustomer(userId)
+      .then((existing) =>
+        existing
+          ? undefined
+          : services.customers.saveProfile({ id: userId, name: 'Night Owl', phone: '', addresses: [], blocked: false, joinedAt: Date.now() })
+      )
       .catch((e) => console.error('[useCurrentUser] could not recover missing customer record', e))
       .finally(() => recovering.delete(userId));
   }, [userId, loading, customer]);

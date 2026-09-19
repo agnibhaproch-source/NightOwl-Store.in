@@ -263,11 +263,11 @@
   }
 
   .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
   }
 
   .safe-top {
-    padding-top: env(safe-area-inset-top);
+    padding-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
   }
 
 
@@ -756,6 +756,7 @@ body {
   Prevent horizontal overflow caused by
   animated decorative elements.
 */
+html,
 body {
   overflow-x: clip;
 }

@@ -5,7 +5,8 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { IconButton, Kbd, Logo } from '@/shared/ui';
 import { useTheme } from '@/shared/store/theme';
 import { useStoreStatus } from '@/shared/hooks/misc';
-import { useOrders } from '@/shared/hooks/live';
+import { useOrders, useRiders, useTopups } from '@/shared/hooks/live';
+import { services } from '@/shared/services';
 import { cn } from '@/shared/lib/cn';
 import { initials } from '@/shared/lib/format';
 import { confirmDialog } from '@/shared/store/confirm';
@@ -35,6 +36,10 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
   const owner = useAdmin((s) => s.session?.role === 'owner');
   const [orders] = useOrders();
   const pending = orders.filter((o) => o.status === 'placed').length;
+  const [topups] = useTopups();
+  const pendingTopups = topups.filter((t) => t.status === 'pending').length;
+  const [riders] = useRiders();
+  const pendingRiders = riders.filter((r) => r.status === 'pending').length;
   const groups = ['Run', 'Catalog', 'Grow', 'Insights'] as const;
   return (
     <nav aria-label="Admin" className="space-y-5">
@@ -66,6 +71,16 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
                         {isActive && <span className="absolute left-0 top-2 h-6 w-1 rounded-r-full bg-accent" />}
                         <n.icon className={cn('relative h-[18px] w-[18px] shrink-0', isActive && 'text-lime')} />
                         {!collapsed && <span className="relative flex-1 truncate">{n.label}</span>}
+                        {n.to === '/admin/riders' && pendingRiders > 0 && (
+                          <span className={cn('relative grid h-5 min-w-5 place-items-center rounded-full bg-pink px-1.5 text-[11px] font-bold text-white', collapsed && 'absolute right-1 top-0.5')}>
+                            {pendingRiders}
+                          </span>
+                        )}
+                        {n.to === '/admin/wallet' && pendingTopups > 0 && (
+                          <span className={cn('relative grid h-5 min-w-5 place-items-center rounded-full bg-pink px-1.5 text-[11px] font-bold text-white', collapsed && 'absolute right-1 top-0.5')}>
+                            {pendingTopups}
+                          </span>
+                        )}
                         {n.to === '/admin/orders' && pending > 0 && (
                           <span className={cn('relative grid h-5 min-w-5 place-items-center rounded-full bg-pink px-1.5 text-[11px] font-bold text-white', collapsed && 'absolute right-1 top-0.5')}>
                             {pending}
@@ -89,7 +104,10 @@ function UserBox({ collapsed }: { collapsed: boolean }) {
   const logout = useAdmin((s) => s.logout);
   const doLogout = async () => {
     const { ok } = await confirmDialog({ title: 'Log out of admin?', confirmLabel: 'Log out', tone: 'danger' });
-    if (ok) logout();
+    if (ok) {
+      logout();
+      void services.auth.adminLogout();
+    }
   };
   return (
     <div className={cn('flex items-center gap-2 rounded-2xl border border-line/60 bg-surface2/40 p-2', collapsed && 'flex-col')}>

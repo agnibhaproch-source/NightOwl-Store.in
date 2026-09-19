@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+# NightOwl
+For late night cravings ...
+=======
 # 🦉 NightOwl — late-night hostel snack delivery
 
 A production-quality **frontend** for a Blinkit-style late-night delivery service that runs inside a
@@ -189,3 +193,4 @@ Nothing in `src/apps/**` needs to change.
   on order status and search results, labelled icon buttons, and WCAG-AA contrast in both themes.
 
 Built as a frontend showcase — hand it a real backend and it ships.
+>>>>>>> dd0bdc1 (hi)

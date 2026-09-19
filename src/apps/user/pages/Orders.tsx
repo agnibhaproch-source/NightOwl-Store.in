@@ -67,7 +67,10 @@ export default function Orders() {
   const [rating, setRating] = useState<Order | null>(null);
   const nav = useNavigate();
 
-  const sorted = useMemo(() => [...orders].sort((a, b) => b.createdAt - a.createdAt), [orders]);
+  const sorted = useMemo(
+    () => orders.filter((o) => o.cancelReason !== 'Payment not completed').sort((a, b) => b.createdAt - a.createdAt),
+    [orders]
+  );
   const counts = {
     all: sorted.length,
     active: sorted.filter(isActive).length,

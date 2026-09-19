@@ -66,6 +66,8 @@ export interface Bill {
   couponCode?: string;
   deliveryFee: number;
   convenienceFee: number;
+  /** Optional Feeding India contribution the customer added at checkout. */
+  donation?: number;
   grandTotal: number;
 }
 
@@ -94,7 +96,23 @@ export interface Order {
   cancelReason?: string;
   cancelledBy?: 'user' | 'store';
   etaMinutes: number;
-  paymentMode: 'pay_on_delivery' | 'upi_qr';
+  paymentMode: 'pay_on_delivery' | 'upi_qr' | 'wallet';
+  /** Who receives the order at the door (may differ from the account holder). */
+  receiver?: Receiver;
+  /** Orders start 'pending' until the store confirms the UPI payment landed. Missing means paid (older orders). */
+  paymentStatus?: 'pending' | 'paid';
+  paidAt?: number;
+  /** Delivery: assigned by the store, driven by the rider. */
+  riderId?: string;
+  rider?: RiderInfo;
+  assignedAt?: number;
+  pickedUpAt?: number;
+  arrivedAt?: number;
+  deliveredAt?: number;
+  /** Customer instructions and rider replies while the order is on its way. */
+  messages?: OrderMessage[];
+  /** Written by the rider at handover; the database only accepts it if it matches the customer's delivery code. */
+  deliveryCode?: string;
   rating?: OrderRating;
 }
 
@@ -143,12 +161,85 @@ export interface StoreSettings {
   hostels: Hostel[];
 }
 
+export type RiderVehicle = 'bike' | 'scooter' | 'cycle' | 'walk';
+export type RiderStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
+export type RiderIdType = 'college' | 'aadhaar' | 'licence';
+
+export interface Rider {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  vehicle: RiderVehicle;
+  vehicleNumber?: string;
+  idType: RiderIdType;
+  /** Only the store owner and the rider themself can read this. */
+  idNumber: string;
+  emergencyName: string;
+  emergencyPhone: string;
+  area?: string;
+  photo?: string;
+  status: RiderStatus;
+  statusReason?: string;
+  online: boolean;
+  createdAt: number;
+  approvedAt?: number;
+  updatedAt?: number;
+}
+
+/** What the customer is allowed to see about the person delivering their order. */
+export interface RiderInfo {
+  id: string;
+  name: string;
+  phone: string;
+  vehicle: RiderVehicle;
+  vehicleNumber?: string;
+}
+
+export interface OrderMessage {
+  id: string;
+  from: 'user' | 'rider';
+  text: string;
+  at: number;
+}
+
+export interface Receiver {
+  name: string;
+  phone: string;
+}
+
+export interface WalletTopup {
+  id: string;
+  userId: string;
+  customerName: string;
+  phone: string;
+  amount: number;
+  /** Shown to the customer to type in the GPay note, so the store can match the payment. */
+  code: string;
+  status: 'pending' | 'paid' | 'cancelled';
+  createdAt: number;
+  paidAt?: number;
+}
+
+export interface WalletTxn {
+  id: string;
+  userId: string;
+  type: 'topup' | 'spend' | 'refund';
+  amount: number;
+  note: string;
+  at: number;
+  orderId?: string;
+}
+
 export interface Customer {
   id: string;
   name: string;
   phone: string;
   addresses: Address[];
   defaultAddressId?: string;
+  receiver?: Receiver;
+  /** Prepaid balance in rupees. */
+  walletBalance?: number;
   blocked: boolean;
   joinedAt: number;
 }
@@ -194,3 +285,9 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   delivered: 'Delivered',
   cancelled: 'Cancelled'
 };
+
+export const isPaid = (o: Pick<Order, 'paymentStatus'>) => o.paymentStatus !== 'pending';
+
+/** Orders that never got paid (still waiting, or dropped/expired): not real sales, so they stay out of stats and lists. */
+export const isAbandoned = (o: Pick<Order, 'paymentStatus' | 'cancelReason'>) =>
+  o.paymentStatus === 'pending' || o.cancelReason === 'Payment not completed';

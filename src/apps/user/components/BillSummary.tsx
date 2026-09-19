@@ -26,6 +26,7 @@ export function BillSummary({ bill, compact }: { bill: Bill; settings?: StoreSet
       {bill.couponDiscount > 0 && <Row label={`Coupon ${bill.couponCode ?? ''}`} value={`−${inr(bill.couponDiscount)}`} tone="lime" />}
       <Row label="Delivery fee" value={inr(bill.deliveryFee)} />
       <Row label="Platform fee" value={inr(bill.convenienceFee)} />
+      {!!bill.donation && <Row label="Feeding India 💛" value={inr(bill.donation)} hint="Thank you for feeding a child" tone="lime" />}
       <div className="my-2 border-t border-dashed border-line" />
       <div className="flex items-center justify-between py-1">
         <span className="font-bold">To pay</span>

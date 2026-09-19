@@ -1,7 +1,7 @@
 import { services, errorMessage } from '@/shared/services';
 import { confirmDialog } from '@/shared/store/confirm';
 import { toast } from '@/shared/store/toast';
-import { STATUS_FLOW, STATUS_LABEL, type Order, type OrderStatus, type StoreSettings } from '@/shared/types';
+import { STATUS_FLOW, STATUS_LABEL, isPaid, type Order, type OrderStatus, type StoreSettings } from '@/shared/types';
 import { fmtDateTime, inr } from '@/shared/lib/format';
 import { downloadFile } from '@/shared/lib/files';
 import { APP } from '@/shared/config/app';
@@ -26,9 +26,39 @@ export const REJECT_REASONS = [
   'Suspected fake order'
 ];
 
+/** True while the customer's UPI payment hasn't been confirmed by the store. */
+export const awaitingPayment = (o: Order) => o.status === 'placed' && !isPaid(o);
+
+export async function markPaid(o: Order) {
+  const { ok } = await confirmDialog({
+    title: `Confirm payment for ${o.shortCode}?`,
+    body: `Only confirm if ${inr(o.bill.grandTotal)} from ${o.customerName} is already in your GPay/bank account. This unlocks the order and notifies the customer.`,
+    confirmLabel: 'Yes, money received'
+  });
+  if (!ok) return;
+  try {
+    await services.orders.confirmPayment(o.id);
+    toast({ title: `#${o.id} marked paid`, body: 'The customer was notified.', emoji: '💰', duration: 2500 });
+  } catch (e) {
+    toast.error(errorMessage(e));
+  }
+}
+
 export async function moveOrder(o: Order, to: OrderStatus) {
   if (o.status === to) return;
   if (to === 'cancelled') return rejectOrder(o);
+  if (!isPaid(o)) {
+    toast.error('Confirm the payment first', 'Nothing moves forward until the money is in.');
+    return;
+  }
+  if (to === 'out_for_delivery' && !o.riderId) {
+    const { ok } = await confirmDialog({ title: 'No rider assigned', body: 'Nobody is set to deliver this order. Send it out anyway?', confirmLabel: 'Send out anyway' });
+    if (!ok) return;
+  }
+  if (to === 'delivered' && o.riderId) {
+    const { ok } = await confirmDialog({ title: `Mark delivered without ${o.rider?.name ?? 'the rider'}?`, body: 'The rider normally completes this with the customer’s delivery code. Only do it yourself if the rider can’t.', confirmLabel: 'Mark delivered' });
+    if (!ok) return;
+  }
   const from = STATUS_FLOW.indexOf(o.status);
   const dest = STATUS_FLOW.indexOf(to);
   if (dest < from) {
@@ -72,10 +102,11 @@ export function slipText(o: Order, s: StoreSettings) {
   return [
     `${APP.name.toUpperCase()} PACKING SLIP`,
     line,
-    `Order   #${o.id}`,
+    `Order   #${o.id}  code ${o.shortCode}`,
     `Placed  ${fmtDateTime(o.createdAt)}`,
     `Name    ${o.customerName}`,
     `Phone   +91 ${o.phone}`,
+    o.receiver ? `Receiver ${o.receiver.name} +91 ${o.receiver.phone}` : '',
     `Deliver ${hostelLabel(o, s)}`,
     o.instructions ? `Note    ${o.instructions}` : '',
     line,
@@ -85,7 +116,8 @@ export function slipText(o: Order, s: StoreSettings) {
     b.couponDiscount ? `Coupon ${(b.couponCode ?? '').padEnd(9)} -${inr(b.couponDiscount).padStart(7)}` : '',
     `Delivery         ${inr(b.deliveryFee).padStart(8)}`,
     `Platform fee     ${inr(b.convenienceFee).padStart(8)}`,
-    `PAID (UPI)       ${inr(b.grandTotal).padStart(8)}`,
+    b.donation ? `Feeding India     ${inr(b.donation).padStart(8)}` : '',
+    `${isPaid(o) ? (o.paymentMode === 'wallet' ? 'PAID (WALLET)   ' : 'PAID (UPI)      ') : 'UNPAID (UPI)    '} ${inr(b.grandTotal).padStart(8)}`,
     line,
     '[ ] Items checked   [ ] Seal intact'
   ]

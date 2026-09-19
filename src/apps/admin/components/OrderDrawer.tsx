@@ -1,11 +1,12 @@
-import { Ban, Download, MessageSquareText, Phone, Printer, Star, User } from 'lucide-react';
+import { Ban, Bike, Download, MessageSquareText, Phone, Printer, Star, User } from 'lucide-react';
 import { Badge, Button, Drawer, PackShot, Stars } from '@/shared/ui';
 import { useOrders, useProducts, useSettings } from '@/shared/hooks/live';
 import { fmtDateTime, fmtTime, inr, timeAgo } from '@/shared/lib/format';
-import { STATUS_LABEL, type OrderStatus } from '@/shared/types';
+import { STATUS_LABEL, isPaid, type OrderStatus } from '@/shared/types';
 import { cn } from '@/shared/lib/cn';
 import { useAdminUi } from '../store/ui';
-import { NEXT_LABEL, downloadSlip, moveOrder, nextStatus, printSlip, rejectOrder } from './orderActions';
+import { fmtTime as fmtT } from '@/shared/lib/format';
+import { NEXT_LABEL, awaitingPayment, downloadSlip, markPaid, moveOrder, nextStatus, printSlip, rejectOrder } from './orderActions';
 
 export const STATUS_TONE: Record<OrderStatus, 'amber' | 'violet' | 'cyan' | 'lime' | 'pink'> = {
   placed: 'amber',
@@ -51,10 +52,21 @@ export function OrderDrawer() {
             <Button variant="outline" icon={<Ban className="h-4 w-4" />} onClick={() => rejectOrder(o)} className="text-pink">
               {o.status === 'placed' ? 'Reject' : 'Cancel'}
             </Button>
-            {next && (
-              <Button variant="primary" block onClick={() => moveOrder(o, next)}>
-                {NEXT_LABEL[o.status]}
+            {!awaitingPayment(o) && (o.status === 'accepted' || o.status === 'packing') && (
+              <Button variant="outline" icon={<Bike className="h-4 w-4" />} onClick={() => useAdminUi.getState().openAssign(o.id)}>
+                {o.rider ? 'Change rider' : 'Assign rider'}
               </Button>
+            )}
+            {awaitingPayment(o) ? (
+              <Button variant="primary" block onClick={() => markPaid(o)}>
+                Confirm payment {inr(o.bill.grandTotal)}
+              </Button>
+            ) : (
+              next && (
+                <Button variant="primary" block onClick={() => moveOrder(o, next)}>
+                  {NEXT_LABEL[o.status]}
+                </Button>
+              )
             )}
           </div>
         ) : undefined
@@ -79,12 +91,46 @@ export function OrderDrawer() {
               <p className="font-display text-2xl font-extrabold leading-tight">{hostel?.short} · {o.address.block}-{o.address.room}</p>
               <p className="text-[13px] text-muted">{hostel?.name}, Block {o.address.block}, Room {o.address.room}</p>
             </div>
+            {o.receiver && (
+              <div className="mt-3 flex items-center gap-3 rounded-xl bg-surface p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12px] font-semibold uppercase tracking-wider text-muted">Receiver at the door</p>
+                  <p className="font-bold">{o.receiver.name} · +91 {o.receiver.phone}</p>
+                </div>
+                <a href={`tel:+91${o.receiver.phone}`} className="grid h-10 w-10 place-items-center rounded-xl border border-line hover:bg-surface2" aria-label={`Call ${o.receiver.name}`}>
+                  <Phone className="h-4 w-4" />
+                </a>
+              </div>
+            )}
             {o.instructions && (
               <p className="mt-3 flex gap-2 rounded-xl border border-amber/40 bg-amber/10 p-3 text-sm">
                 <MessageSquareText className="h-4 w-4 shrink-0 text-amber" /> {o.instructions}
               </p>
             )}
           </section>
+
+          {(o.rider || !!o.messages?.length) && (
+            <section className="rounded-2xl border border-cyan/30 bg-cyan/5 p-4">
+              <h3 className="mb-2 flex items-center gap-2 text-[13px] font-semibold uppercase tracking-wider text-cyan"><Bike className="h-4 w-4" /> Delivery</h3>
+              {o.rider && (
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold">{o.rider.name}</p>
+                    <p className="text-[13px] text-muted capitalize">{o.rider.vehicle === 'walk' ? 'On foot' : o.rider.vehicle}{o.rider.vehicleNumber ? ` · ${o.rider.vehicleNumber}` : ''}</p>
+                    <p className="text-[12px] text-muted">
+                      {o.assignedAt ? `Assigned ${fmtT(o.assignedAt)}` : ''}{o.pickedUpAt ? ` · picked up ${fmtT(o.pickedUpAt)}` : ''}{o.arrivedAt ? ` · at the door ${fmtT(o.arrivedAt)}` : ''}{o.deliveredAt ? ` · delivered ${fmtT(o.deliveredAt)} with the customer’s code` : ''}
+                    </p>
+                  </div>
+                  <a href={`tel:+91${o.rider.phone}`} className="grid h-10 w-10 place-items-center rounded-xl border border-line hover:bg-surface2" aria-label={`Call ${o.rider.name}`}><Phone className="h-4 w-4" /></a>
+                </div>
+              )}
+              {!!o.messages?.length && (
+                <ul className="mt-3 space-y-1 border-t border-cyan/20 pt-3 text-sm">
+                  {o.messages.slice(-6).map((m) => <li key={m.id}><b>{m.from === 'rider' ? 'Rider' : 'Customer'}:</b> {m.text} <span className="text-[11px] text-muted">{fmtT(m.at)}</span></li>)}
+                </ul>
+              )}
+            </section>
+          )}
 
           <section>
             <h3 className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-muted">
@@ -113,14 +159,15 @@ export function OrderDrawer() {
               ['Items', inr(o.bill.itemTotal)],
               o.bill.couponDiscount ? [`Coupon ${o.bill.couponCode}`, `−${inr(o.bill.couponDiscount)}`] : null,
               ['Delivery', inr(o.bill.deliveryFee)],
-              ['Platform fee', inr(o.bill.convenienceFee)]
+              ['Platform fee', inr(o.bill.convenienceFee)],
+              o.bill.donation ? ['Feeding India (donation)', inr(o.bill.donation)] : null
             ]
               .filter((r): r is string[] => !!r)
               .map(([k, v]) => (
                 <p key={k} className="flex justify-between py-0.5"><span className="text-muted">{k}</span><span className="price">{v}</span></p>
               ))}
             <p className="mt-2 flex justify-between border-t border-dashed border-line pt-2 text-base font-bold">
-              <span>Paid via UPI</span><span className="price">{inr(o.bill.grandTotal)}</span>
+              <span>{isPaid(o) ? (o.paymentMode === 'wallet' ? 'PAID from wallet' : 'PAID via UPI') : 'UNPAID · awaiting payment'}</span><span className="price">{inr(o.bill.grandTotal)}</span>
             </p>
           </section>
 
@@ -149,7 +196,7 @@ export function OrderDrawer() {
               {o.rating.comment && <p className="mt-1 text-sm text-muted">“{o.rating.comment}”</p>}
             </section>
           )}
-          <p className="text-center text-[12px] text-muted">Placed {fmtDateTime(o.createdAt)} · Paid via UPI</p>
+          <p className="text-center text-[12px] text-muted">Placed {fmtDateTime(o.createdAt)} · {isPaid(o) ? `Paid via UPI${o.paidAt ? ` at ${fmtTime(o.paidAt)}` : ''}` : 'Payment pending'}</p>
         </div>
       )}
     </Drawer>

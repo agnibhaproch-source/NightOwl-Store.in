@@ -7,7 +7,7 @@ import { useStoreStatus } from '@/shared/hooks/misc';
 import { DAY, fmtDuration, hourBuckets, latestNight } from '@/shared/lib/time';
 import { fmtDate, inr, timeAgo } from '@/shared/lib/format';
 import { Badge, EmptyState, NightDial, PackShot, Skeleton } from '@/shared/ui';
-import { STATUS_LABEL, type Order } from '@/shared/types';
+import { STATUS_LABEL, isAbandoned, type Order } from '@/shared/types';
 import { useAdmin } from '../store/session';
 import { useAdminUi } from '../store/ui';
 import { PageTitle, Panel } from '../components/Layout';
@@ -18,7 +18,8 @@ const valid = (o: Order) => o.status !== 'cancelled';
 const inRange = (o: Order, a: number, b: number) => o.createdAt >= a && o.createdAt < b;
 
 export default function Dashboard() {
-  const [orders, oLoading] = useOrders();
+  const [allOrders, oLoading] = useOrders();
+  const orders = useMemo(() => allOrders.filter((o) => !isAbandoned(o)), [allOrders]);
   const [products, pLoading] = useProducts();
   const [cats] = useCategories();
   const { status, settings, now } = useStoreStatus(30_000);

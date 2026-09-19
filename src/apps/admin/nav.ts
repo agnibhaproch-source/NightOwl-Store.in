@@ -1,4 +1,4 @@
-import { BarChart3, Boxes, ClipboardList, LayoutDashboard, Megaphone, MessageSquareQuote, Settings2, Store, Tags, TicketPercent, Users, Layers, Image } from 'lucide-react';
+import { Bike, Wallet, BarChart3, Boxes, ClipboardList, LayoutDashboard, Megaphone, MessageSquareQuote, Settings2, Store, Tags, TicketPercent, Users, Layers, Image } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -12,6 +12,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, group: 'Run', keywords: 'home kpi stats' },
   { to: '/admin/orders', label: 'Live orders', icon: ClipboardList, group: 'Run', keywords: 'kanban queue' },
+  { to: '/admin/riders', label: 'Riders', icon: Bike, group: 'Run', keywords: 'delivery boy partner assign register' },
   { to: '/admin/store', label: 'Store controls', icon: Store, group: 'Run', owner: true, keywords: 'open close hours fees hostels settings' },
   { to: '/admin/products', label: 'Products & stock', icon: Boxes, group: 'Catalog', keywords: 'inventory items restock' },
   { to: '/admin/categories', label: 'Categories', icon: Tags, group: 'Catalog', owner: true },

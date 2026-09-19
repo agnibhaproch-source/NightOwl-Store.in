@@ -5,3 +5,16 @@ dev-dist
 *.local
 .env.local
 .env
+
+# Android signing (never commit)
+android/keystore.properties
+android/*.jks
+android/local.properties
+android/app/google-services.json.bak
+
+# Android build output
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+.claude/

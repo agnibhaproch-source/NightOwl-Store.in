@@ -14,6 +14,8 @@ import type {
 import { STATUS_LABEL } from '../types';
 import { ServiceError, type Services } from './contracts';
 
+const live = () => new ServiceError('This needs the live backend.');
+
 const K = {
   products: 'products',
   categories: 'categories',
@@ -300,7 +302,8 @@ export const mockServices: Services = {
         updatedAt: now,
         history: [{ status: 'placed', at: now }],
         etaMinutes: settings.etaMax,
-        paymentMode: 'upi_qr'
+        paymentMode: 'upi_qr',
+        paymentStatus: 'pending'
       };
       db.set(K.orders, [order, ...get.orders()]);
       pushNotification({
@@ -316,6 +319,7 @@ export const mockServices: Services = {
       const o = orders.find((x) => x.id === id);
       if (!o) throw new ServiceError('Order not found.');
       if (o.status === status) return;
+      if (o.paymentStatus === 'pending' && status !== 'cancelled') throw new ServiceError('Confirm the payment first.');
       if (o.status === 'delivered' || o.status === 'cancelled')
         throw new ServiceError(`This order is already ${STATUS_LABEL[o.status].toLowerCase()}.`);
       const next: Order = {
@@ -350,6 +354,48 @@ export const mockServices: Services = {
         throw new ServiceError(`The ${APP.cancelWindowSeconds}-second cancellation window has closed. Call support.`, 'window');
       await mockServices.orders.updateStatus(id, 'cancelled', 'Cancelled by you');
       db.update<Order[]>(K.orders, E, (l) => l.map((x) => (x.id === id ? { ...x, cancelledBy: 'user' } : x)));
+    },
+
+    async confirmPayment(id) {
+      const now = Date.now();
+      db.update<Order[]>(K.orders, E, (l) => l.map((o) => (o.id === id && o.paymentStatus === 'pending' ? { ...o, paymentStatus: 'paid' as const, paidAt: now, updatedAt: now } : o)));
+    },
+
+    async cancelUnpaid(id, userId) {
+      const o = get.orders().find((x) => x.id === id);
+      if (!o || o.userId !== userId || o.paymentStatus !== 'pending') throw new ServiceError('Order not found.');
+      await mockServices.orders.updateStatus(id, 'cancelled', 'Payment not completed');
+    },
+
+    async assignRider() {
+      throw live();
+    },
+    async getDeliveryCode() {
+      return null;
+    },
+    async sendMessage() {
+      throw live();
+    },
+    async riderPickup() {
+      throw live();
+    },
+    async riderArrived() {
+      throw live();
+    },
+    async riderDeliver() {
+      throw live();
+    },
+
+    async setDonation() {
+      throw live();
+    },
+
+    async setReceiver() {
+      throw live();
+    },
+
+    async payWithWallet() {
+      throw live();
     },
 
     async rateOrder(id, rating) {
@@ -441,6 +487,9 @@ export const mockServices: Services = {
         l.some((x) => x.id === c.id) ? l.map((x) => (x.id === c.id ? c : x)) : [...l, c]
       );
     },
+    async saveReceiver() {
+      throw live();
+    },
     async saveAddress(userId, a, makeDefault) {
       await wait(200);
       if (!a.room.trim()) throw new ServiceError('Add your room number.');
@@ -471,6 +520,40 @@ export const mockServices: Services = {
     }
   },
 
+  riders: {
+    watchRiders: (cb) => watch('riders', E as never[], cb),
+    watchRider: (_id, cb) => watch('riders', E as never[], () => cb(null)),
+    watchRiderOrders: (_id, cb) => watch('riderOrders', E as never[], cb),
+    async register() {
+      throw live();
+    },
+    async login() {
+      throw live();
+    },
+    async logout() {},
+    async setStatus() {
+      throw live();
+    },
+    async setOnline() {
+      throw live();
+    }
+  },
+
+  wallet: {
+    watchTopups: (cb) => watch('walletTopups', E as never[], cb),
+    watchUserTopups: (_u, cb) => watch('walletTopups', E as never[], cb),
+    watchUserTxns: (_u, cb) => watch('walletTxns', E as never[], cb),
+    async createTopup() {
+      throw live();
+    },
+    async confirmTopup() {
+      throw live();
+    },
+    async cancelTopup() {
+      throw live();
+    }
+  },
+
   auth: {
     async requestOtp(phone) {
       await wait(600);
@@ -488,11 +571,9 @@ export const mockServices: Services = {
       if (customer?.blocked) throw new ServiceError('This account is blocked. Contact support.', 'blocked');
       return { customer };
     },
-    async adminLogin(email, password) {
-      await wait(600);
-      const a = APP.admins.find((x) => x.email === email.trim().toLowerCase() && x.password === password);
-      if (!a) throw new ServiceError('Email or password is wrong.');
-      return { name: a.name, email: a.email, role: a.role };
-    }
+    async adminLogin() {
+      throw live();
+    },
+    async adminLogout() {},
   }
 };

@@ -10,20 +10,23 @@
  */
 import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
-  query, where, orderBy, writeBatch, runTransaction, type Unsubscribe
+  query, where, orderBy, writeBatch, runTransaction, increment, arrayUnion, type Unsubscribe
 } from 'firebase/firestore';
-import { authReady, firestore } from '../lib/firebase';
+import { PhoneAuthProvider, RecaptchaVerifier, createUserWithEmailAndPassword, signInAnonymously, signInWithCredential, signInWithEmailAndPassword, signInWithPhoneNumber, signOut, type ConfirmationResult } from 'firebase/auth';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
+import { isNative } from '../lib/native';
+import { auth, authReady, firestore } from '../lib/firebase';
 import { computeBill } from '../lib/bill';
 import { getStoreStatus } from '../lib/time';
 import { newOrderId, uid } from '../lib/format';
 import { APP } from '../config/app';
 import {
-  SEED_VERSION, buildCoupons, buildCustomers, buildFeed, buildOrders, buildProducts,
+  SEED_VERSION, buildCoupons, buildCustomers, buildFeed, buildProducts,
   defaultSettings, seedBanners, seedCategories
 } from '../data/seed';
 import type {
   AppNotification, Banner, BroadcastLog, Category, Coupon, Customer, Order, OrderStatus,
-  Product, StockAlert, StoreSettings, Unsub
+  OrderMessage, Product, Receiver, Rider, RiderInfo, RiderStatus, StockAlert, StoreSettings, Unsub, WalletTopup, WalletTxn
 } from '../types';
 import { STATUS_LABEL } from '../types';
 import { ServiceError, type Services } from './contracts';
@@ -37,8 +40,44 @@ const COL = {
   customers: 'customers',
   feed: 'feed',
   broadcasts: 'broadcasts',
-  alerts: 'stockAlerts'
+  alerts: 'stockAlerts',
+  topups: 'walletTopups',
+  txns: 'walletTxns',
+  riders: 'riders',
+  secrets: 'orderSecrets'
 } as const;
+
+let recaptcha: RecaptchaVerifier | null = null;
+let smsConfirmation: ConfirmationResult | null = null;
+let nativeVerificationId: string | null = null;
+
+/** Android/iOS app: SMS is requested through the OS (no reCAPTCHA, which doesn't work inside a WebView). */
+async function sendNativeOtp(phone: string) {
+  const handles: { remove: () => Promise<void> }[] = [];
+  try {
+    const sent = new Promise<string>((resolve, reject) => {
+      void FirebaseAuthentication.addListener('phoneCodeSent', (e) => resolve(e.verificationId)).then((h) => handles.push(h));
+      void FirebaseAuthentication.addListener('phoneVerificationFailed', (e) => reject(Object.assign(new Error(e.message), { code: 'auth/native-failed' }))).then((h) => handles.push(h));
+      setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'auth/network-request-failed' })), 60000);
+    });
+    await FirebaseAuthentication.signInWithPhoneNumber({ phoneNumber: `+91${phone}` });
+    nativeVerificationId = await sent;
+  } finally {
+    await Promise.all(handles.map((h) => h.remove()));
+  }
+}
+
+function otpSendError(code?: string) {
+  switch (code) {
+    case 'auth/invalid-phone-number': return 'That mobile number doesn’t look right.';
+    case 'auth/too-many-requests': return 'Too many attempts. Wait a few minutes and try again.';
+    case 'auth/quota-exceeded': return 'SMS limit reached for today. Try again later.';
+    case 'auth/captcha-check-failed': return 'Could not verify this device. Refresh and try again.';
+    case 'auth/billing-not-enabled': return 'SMS sending isn’t enabled for this project yet.';
+    case 'auth/operation-not-allowed': return 'Phone sign-in is turned off for this region.';
+    default: return `Couldn’t send the code${code ? ` (${code})` : ''}. Try again.`;
+  }
+}
 
 const SETTINGS_DOC = ['settings', 'config'] as const;
 const SEED_DOC = ['meta', 'seed'] as const;
@@ -93,6 +132,33 @@ function pushNotification(batch: ReturnType<typeof writeBatch>, n: AppNotificati
   batch.set(doc(firestore, COL.feed, n.id), n);
 }
 
+/** Wallet-paid orders that get cancelled put the money straight back. */
+function refundWalletOrder(batch: ReturnType<typeof writeBatch>, o: Order) {
+  if (o.paymentMode !== 'wallet' || o.paymentStatus === 'pending') return;
+  const at = Date.now();
+  batch.update(doc(firestore, COL.customers, o.userId), { walletBalance: increment(o.bill.grandTotal) });
+  const txn: WalletTxn = { id: uid('wtx'), userId: o.userId, type: 'refund', amount: o.bill.grandTotal, note: `Refund for order ${o.shortCode}`, at, orderId: o.id };
+  batch.set(doc(firestore, COL.txns, txn.id), txn);
+  pushNotification(batch, {
+    id: `ord_${o.id}_refund`, type: 'order', title: 'Refunded to your wallet 💸',
+    body: `₹${o.bill.grandTotal} for order ${o.shortCode} is back in your wallet.`, at,
+    audience: { kind: 'user', userId: o.userId }, link: '/wallet'
+  });
+}
+
+const riderInfo = (r: Rider): RiderInfo => ({ id: r.id, name: r.name, phone: r.phone, vehicle: r.vehicle, vehicleNumber: r.vehicleNumber });
+
+const authErrorText = (code?: string) => {
+  switch (code) {
+    case 'auth/email-already-in-use': return 'That email already has an account. Sign in instead.';
+    case 'auth/weak-password': return 'Choose a password with at least 8 characters.';
+    case 'auth/invalid-email': return 'That email address doesn’t look right.';
+    case 'auth/too-many-requests': return 'Too many attempts. Wait a few minutes and try again.';
+    case 'auth/network-request-failed': return 'No connection. Check your internet and try again.';
+    default: return 'Email or password is wrong.';
+  }
+};
+
 const firstItem = (o: Order) => {
   const n = o.items[0]?.name ?? 'order';
   return n.split(' ').slice(0, 2).join(' ');
@@ -123,7 +189,7 @@ async function seedAll() {
   const now = Date.now();
   const products = buildProducts(now);
   const customers = buildCustomers(now);
-  const orders = buildOrders(now, products, customers);
+  // No demo orders: the admin board should only ever show orders real customers placed.
   const coupons = buildCoupons(now);
   const { feed, broadcasts } = buildFeed(now);
 
@@ -131,7 +197,6 @@ async function seedAll() {
     ...seedCategories.map((c) => ({ path: [COL.categories, c.id] as [string, string], data: c })),
     ...products.map((p) => ({ path: [COL.products, p.id] as [string, string], data: p })),
     ...customers.map((c) => ({ path: [COL.customers, c.id] as [string, string], data: c })),
-    ...orders.map((o) => ({ path: [COL.orders, o.id] as [string, string], data: o })),
     ...coupons.map((c) => ({ path: [COL.coupons, c.code] as [string, string], data: c })),
     ...seedBanners.map((b) => ({ path: [COL.banners, b.id] as [string, string], data: b })),
     ...feed.map((f) => ({ path: [COL.feed, f.id] as [string, string], data: f })),
@@ -209,7 +274,12 @@ export const firebaseServices: Services = {
       });
     },
     async setActive(id, active) {
-      await authed(() => updateDoc(doc(firestore, COL.products, id), { active }));
+      await authed(async () => {
+        const ref = doc(firestore, COL.products, id);
+        const snap = await getDoc(ref);
+        await updateDoc(ref, { active });
+        if (snap.exists() && active && !(snap.data() as Product).active && (snap.data() as Product).stock > 0) await fireBackInStock(snap.data() as Product);
+      });
     },
     async saveCategory(c) {
       await authed(async () => {
@@ -237,16 +307,29 @@ export const firebaseServices: Services = {
   inventory: {
     async adjustStock(id, delta) {
       await authed(async () => {
+        let restocked: Product | null = null;
         await runTransaction(firestore, async (tx) => {
           const ref = doc(firestore, COL.products, id);
           const snap = await tx.get(ref);
           if (!snap.exists()) return;
-          tx.update(ref, { stock: Math.max(0, (snap.data() as Product).stock + delta) });
+          const p = snap.data() as Product;
+          const next = Math.max(0, p.stock + delta);
+          tx.update(ref, { stock: next });
+          if (p.stock <= 0 && next > 0) restocked = { ...p, stock: next };
         });
+        if (restocked) await fireBackInStock(restocked);
       });
     },
     async setStock(id, qty) {
-      await authed(() => updateDoc(doc(firestore, COL.products, id), { stock: Math.max(0, qty) }));
+      await authed(async () => {
+        const ref = doc(firestore, COL.products, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return;
+        const p = snap.data() as Product;
+        const next = Math.max(0, qty);
+        await updateDoc(ref, { stock: next });
+        if (p.stock <= 0 && next > 0) await fireBackInStock({ ...p, stock: next });
+      });
     },
     async bulkStock(ids, mode, qty) {
       await authed(async () => {
@@ -328,6 +411,7 @@ export const firebaseServices: Services = {
           customerName: customer.name,
           phone: customer.phone,
           address,
+          receiver: customer.receiver ?? { name: customer.name, phone: customer.phone },
           items,
           bill,
           instructions: input.instructions.trim(),
@@ -336,7 +420,8 @@ export const firebaseServices: Services = {
           updatedAt: now,
           history: [{ status: 'placed', at: now }],
           etaMinutes: settings.etaMax,
-          paymentMode: 'upi_qr'
+          paymentMode: 'upi_qr',
+          paymentStatus: 'pending'
         };
 
         const batch = writeBatch(firestore);
@@ -346,8 +431,11 @@ export const firebaseServices: Services = {
         });
         if (coupon && cc?.ok) batch.update(doc(firestore, COL.coupons, coupon.code), { used: coupon.used + 1 });
         batch.set(doc(firestore, COL.orders, order.id), order);
+        // The delivery code is stored apart from the order: riders can't read it, and the database checks it at handover.
+        batch.set(doc(firestore, COL.secrets, order.id), { otp: String(Math.floor(1000 + Math.random() * 9000)), userId: customer.id, createdAt: now });
         pushNotification(batch, {
-          id: `ord_${order.id}_placed`, type: 'order', ...STATUS_COPY.placed(order), at: now,
+          id: `ord_${order.id}_placed`, type: 'order', title: 'Order created 🦉',
+          body: `Order ${shortCode} for ₹${bill.grandTotal} is waiting for your payment. Pay via the QR and we’ll confirm it here.`, at: now,
           audience: { kind: 'user', userId: customer.id }, link: `/orders/${order.id}`
         });
         await batch.commit();
@@ -363,6 +451,8 @@ export const firebaseServices: Services = {
         if (!snap.exists()) throw new ServiceError('Order not found.');
         const o = snap.data() as Order;
         if (o.status === status) return;
+        if (o.paymentStatus === 'pending' && status !== 'cancelled')
+          throw new ServiceError('Confirm the payment first. Nothing moves forward until the money is in.');
         if (o.status === 'delivered' || o.status === 'cancelled')
           throw new ServiceError(`This order is already ${STATUS_LABEL[o.status].toLowerCase()}.`);
         const next: Order = {
@@ -375,6 +465,7 @@ export const firebaseServices: Services = {
         const batch = writeBatch(firestore);
         batch.set(ref, next);
         if (status === 'cancelled') {
+          refundWalletOrder(batch, o);
           const productSnaps = await Promise.all(o.items.map((i) => getDoc(doc(firestore, COL.products, i.productId))));
           o.items.forEach((line, i) => {
             const s = productSnaps[i];
@@ -396,7 +487,9 @@ export const firebaseServices: Services = {
         if (!snap.exists() || (snap.data() as Order).userId !== userId) throw new ServiceError('Order not found.');
         const o = snap.data() as Order;
         if (o.status !== 'placed') throw new ServiceError('The store already accepted this order, so it can’t be cancelled here. Call support.');
-        if (Date.now() - o.createdAt > APP.cancelWindowSeconds * 1000)
+        if (o.paymentStatus === 'pending') throw new ServiceError('This order is still unpaid. Use “Cancel payment” instead.');
+        if (o.paymentMode === 'wallet') throw new ServiceError('Wallet-paid orders are cancelled by the store so your refund is safe. Call customer care and we’ll do it right away.', 'wallet');
+        if (Date.now() - (o.paidAt ?? o.createdAt) > APP.cancelWindowSeconds * 1000)
           throw new ServiceError(`The ${APP.cancelWindowSeconds}-second cancellation window has closed. Call support.`, 'window');
         await updateDoc(ref, {
           status: 'cancelled',
@@ -407,6 +500,7 @@ export const firebaseServices: Services = {
         });
         const productSnaps = await Promise.all(o.items.map((i) => getDoc(doc(firestore, COL.products, i.productId))));
         const batch = writeBatch(firestore);
+        refundWalletOrder(batch, o);
         o.items.forEach((line, i) => {
           const s = productSnaps[i];
           if (s?.exists()) batch.update(doc(firestore, COL.products, line.productId), { stock: (s.data() as Product).stock + line.qty });
@@ -416,6 +510,221 @@ export const firebaseServices: Services = {
           audience: { kind: 'user', userId }, link: `/orders/${id}`
         });
         await batch.commit();
+      });
+    },
+
+    async confirmPayment(id) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.orders, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) throw new ServiceError('Order not found.');
+        const o = snap.data() as Order;
+        if (o.status === 'cancelled') throw new ServiceError('This order was cancelled. Refund the customer instead.');
+        if (o.paymentStatus !== 'pending') return;
+        const now = Date.now();
+        const batch = writeBatch(firestore);
+        batch.update(ref, { paymentStatus: 'paid', paidAt: now, updatedAt: now });
+        pushNotification(batch, {
+          id: `ord_${id}_paid`, type: 'order', title: 'Payment received ✅',
+          body: `Your ₹${o.bill.grandTotal} payment for order ${o.shortCode} is confirmed. Tap to continue.`, at: now,
+          audience: { kind: 'user', userId: o.userId }, link: `/checkout`
+        });
+        await batch.commit();
+      });
+    },
+
+    async cancelUnpaid(id, userId) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.orders, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as Order).userId !== userId) throw new ServiceError('Order not found.');
+        const o = snap.data() as Order;
+        if (o.paymentStatus !== 'pending' || o.status !== 'placed') throw new ServiceError('This order is already paid, so it can’t be dropped here.');
+        const now = Date.now();
+        const productSnaps = await Promise.all(o.items.map((i) => getDoc(doc(firestore, COL.products, i.productId))));
+        const batch = writeBatch(firestore);
+        batch.update(ref, {
+          status: 'cancelled', updatedAt: now, history: [...o.history, { status: 'cancelled', at: now }],
+          cancelReason: 'Payment not completed', cancelledBy: 'user'
+        });
+        o.items.forEach((line, i) => {
+          const s = productSnaps[i];
+          if (s?.exists()) batch.update(doc(firestore, COL.products, line.productId), { stock: (s.data() as Product).stock + line.qty });
+        });
+        await batch.commit();
+      });
+    },
+
+    async assignRider(orderId, riderId) {
+      await authed(async () => {
+        const [oSnap, rSnap] = await Promise.all([getDoc(doc(firestore, COL.orders, orderId)), getDoc(doc(firestore, COL.riders, riderId))]);
+        if (!oSnap.exists()) throw new ServiceError('Order not found.');
+        if (!rSnap.exists()) throw new ServiceError('Rider not found.');
+        const o = oSnap.data() as Order;
+        const r = rSnap.data() as Rider;
+        if (r.status !== 'approved') throw new ServiceError('Only approved riders can take deliveries.');
+        if (o.paymentStatus === 'pending') throw new ServiceError('Confirm the payment before assigning a rider.');
+        if (o.status === 'delivered' || o.status === 'cancelled') throw new ServiceError(`This order is already ${o.status}.`);
+        if (o.status === 'placed') throw new ServiceError('Accept the order first.');
+        if (o.riderId === riderId) return;
+        const now = Date.now();
+        const batch = writeBatch(firestore);
+        batch.update(doc(firestore, COL.orders, orderId), { riderId, rider: riderInfo(r), assignedAt: now, updatedAt: now });
+        pushNotification(batch, {
+          id: `ord_${orderId}_rider_${riderId}`, type: 'order', title: `${r.name} will deliver your order 🛵`,
+          body: `Order ${o.shortCode} has a rider. You can call them or leave instructions.`, at: now,
+          audience: { kind: 'user', userId: o.userId }, link: `/orders/${orderId}`
+        });
+        await batch.commit();
+      });
+    },
+
+    async getDeliveryCode(orderId) {
+      return authed(async () => {
+        try {
+          const snap = await getDoc(doc(firestore, COL.secrets, orderId));
+          return snap.exists() ? String((snap.data() as { otp: string }).otp) : null;
+        } catch {
+          return null;
+        }
+      });
+    },
+
+    async sendMessage(orderId, from, text) {
+      await authed(async () => {
+        const clean = text.trim().slice(0, 200);
+        if (!clean) throw new ServiceError('Write a message first.');
+        const ref = doc(firestore, COL.orders, orderId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) throw new ServiceError('Order not found.');
+        const o = snap.data() as Order;
+        if (o.status === 'delivered' || o.status === 'cancelled') throw new ServiceError('This order is finished, so messages are closed.');
+        const now = Date.now();
+        const msg: OrderMessage = { id: uid('msg'), from, text: clean, at: now };
+        const batch = writeBatch(firestore);
+        batch.update(ref, { messages: arrayUnion(msg), updatedAt: now });
+        if (from === 'rider') {
+          pushNotification(batch, {
+            id: `msg_${msg.id}`, type: 'order', title: `${o.rider?.name ?? 'Your rider'}: ${clean.slice(0, 60)}`,
+            body: 'Tap to reply.', at: now, audience: { kind: 'user', userId: o.userId }, link: `/orders/${orderId}`
+          });
+        }
+        await batch.commit();
+      });
+    },
+
+    async riderPickup(orderId, riderId) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.orders, orderId);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as Order).riderId !== riderId) throw new ServiceError('This delivery isn’t assigned to you.');
+        const o = snap.data() as Order;
+        if (o.status === 'out_for_delivery') return;
+        if (o.status !== 'accepted' && o.status !== 'packing') throw new ServiceError('This order isn’t ready for pickup yet.');
+        const now = Date.now();
+        const next: Order = { ...o, status: 'out_for_delivery' };
+        const batch = writeBatch(firestore);
+        batch.update(ref, { status: 'out_for_delivery', history: [...o.history, { status: 'out_for_delivery', at: now }], pickedUpAt: now, updatedAt: now });
+        pushNotification(batch, { id: `ord_${orderId}_out_for_delivery`, type: 'order', ...STATUS_COPY.out_for_delivery(next), at: now, audience: { kind: 'user', userId: o.userId }, link: `/orders/${orderId}` });
+        await batch.commit();
+      });
+    },
+
+    async riderArrived(orderId, riderId) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.orders, orderId);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as Order).riderId !== riderId) throw new ServiceError('This delivery isn’t assigned to you.');
+        const o = snap.data() as Order;
+        if (o.status !== 'out_for_delivery') throw new ServiceError('Pick up the parcel first.');
+        if (o.arrivedAt) return;
+        const now = Date.now();
+        const batch = writeBatch(firestore);
+        batch.update(ref, { arrivedAt: now, updatedAt: now });
+        pushNotification(batch, {
+          id: `ord_${orderId}_arrived`, type: 'order', title: 'Your rider is at the door 🛵',
+          body: `${o.rider?.name ?? 'Your rider'} has arrived. Have your delivery code ready.`, at: now,
+          audience: { kind: 'user', userId: o.userId }, link: `/orders/${orderId}`
+        });
+        await batch.commit();
+      });
+    },
+
+    async riderDeliver(orderId, riderId, code) {
+      await authed(async () => {
+        const clean = code.replace(/\D/g, '');
+        if (clean.length !== 4) throw new ServiceError('Enter the customer’s 4-digit delivery code.', 'code');
+        const ref = doc(firestore, COL.orders, orderId);
+        try {
+          // A transaction, not a batch: nothing shows as "delivered" on screen until the server has accepted the code.
+          await runTransaction(firestore, async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists() || (snap.data() as Order).riderId !== riderId) throw new ServiceError('This delivery isn’t assigned to you.');
+            const o = snap.data() as Order;
+            if (o.status === 'delivered') return;
+            if (o.status !== 'out_for_delivery') throw new ServiceError('Pick up the parcel first.');
+            const now = Date.now();
+            tx.update(ref, { status: 'delivered', history: [...o.history, { status: 'delivered', at: now }], deliveredAt: now, updatedAt: now, deliveryCode: clean });
+            const n: AppNotification = { id: `ord_${orderId}_delivered`, type: 'order', ...STATUS_COPY.delivered({ ...o, status: 'delivered' }), at: now, audience: { kind: 'user', userId: o.userId }, link: `/orders/${orderId}` };
+            tx.set(doc(firestore, COL.feed, n.id), n);
+          });
+        } catch (e) {
+          if (e instanceof ServiceError) throw e;
+          if ((e as { code?: string }).code === 'permission-denied')
+            throw new ServiceError('That code doesn’t match. Ask the customer to read the code from their order screen.', 'code');
+          throw e;
+        }
+      });
+    },
+
+    async setDonation(id, userId, amount) {
+      await authed(async () => {
+        if (![0, 2, 5, 10].includes(amount)) throw new ServiceError('Pick ₹2, ₹5 or ₹10.');
+        const ref = doc(firestore, COL.orders, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as Order).userId !== userId) throw new ServiceError('Order not found.');
+        const o = snap.data() as Order;
+        if (o.paymentStatus !== 'pending' || o.status !== 'placed') throw new ServiceError('This order is already paid, so the bill can’t change.');
+        const base = o.bill.grandTotal - (o.bill.donation ?? 0);
+        await updateDoc(ref, { bill: { ...o.bill, donation: amount, grandTotal: base + amount }, updatedAt: Date.now() });
+      });
+    },
+
+    async setReceiver(id, userId, receiver) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.orders, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as Order).userId !== userId) throw new ServiceError('Order not found.');
+        if ((snap.data() as Order).status !== 'placed') return;
+        await updateDoc(ref, { receiver });
+      });
+    },
+
+    async payWithWallet(id, userId) {
+      await authed(async () => {
+        await runTransaction(firestore, async (tx) => {
+          const oRef = doc(firestore, COL.orders, id);
+          const cRef = doc(firestore, COL.customers, userId);
+          const [oSnap, cSnap] = await Promise.all([tx.get(oRef), tx.get(cRef)]);
+          if (!oSnap.exists() || !cSnap.exists()) throw new ServiceError('Order not found.');
+          const o = oSnap.data() as Order;
+          const c = cSnap.data() as Customer;
+          if (o.userId !== userId) throw new ServiceError('Order not found.');
+          if (o.paymentStatus !== 'pending' || o.status !== 'placed') throw new ServiceError('This order is already paid.');
+          const balance = c.walletBalance ?? 0;
+          if (balance < o.bill.grandTotal) throw new ServiceError(`Your wallet has ₹${balance}. This order is ₹${o.bill.grandTotal}.`, 'wallet');
+          const now = Date.now();
+          tx.update(cRef, { walletBalance: balance - o.bill.grandTotal });
+          tx.update(oRef, { paymentStatus: 'paid', paidAt: now, updatedAt: now, paymentMode: 'wallet' });
+          const txn: WalletTxn = { id: uid('wtx'), userId, type: 'spend', amount: o.bill.grandTotal, note: `Order ${o.shortCode}`, at: now, orderId: id };
+          tx.set(doc(firestore, COL.txns, txn.id), txn);
+          const n: AppNotification = {
+            id: `ord_${id}_paid`, type: 'order', title: 'Paid from your wallet ✅',
+            body: `₹${o.bill.grandTotal} paid for order ${o.shortCode}. Waiting for the store to accept it.`, at: now,
+            audience: { kind: 'user', userId }, link: `/orders/${id}`
+          };
+          tx.set(doc(firestore, COL.feed, n.id), n);
+        });
       });
     },
 
@@ -515,6 +824,15 @@ export const firebaseServices: Services = {
         await setDoc(doc(firestore, COL.customers, c.id), c);
       });
     },
+    async saveReceiver(userId, receiver: Receiver) {
+      await authed(async () => {
+        const name = receiver.name.trim();
+        const phone = receiver.phone.replace(/\D/g, '');
+        if (!name) throw new ServiceError('Add the receiver’s name.');
+        if (!/^[6-9]\d{9}$/.test(phone)) throw new ServiceError('Enter a valid 10-digit mobile number.');
+        await setDoc(doc(firestore, COL.customers, userId), { receiver: { name, phone } }, { merge: true });
+      });
+    },
     async saveAddress(userId, a, makeDefault) {
       await authed(async () => {
         if (!a.room.trim()) throw new ServiceError('Add your room number.');
@@ -546,28 +864,217 @@ export const firebaseServices: Services = {
     }
   },
 
+  riders: {
+    watchRiders: (cb) => watchCollection<Rider>(COL.riders, (l) => cb([...l].sort((a, b) => b.createdAt - a.createdAt))),
+    watchRider: (id, cb) => watchDoc<Rider>([COL.riders, id], cb),
+    watchRiderOrders: (riderId, cb) => watchCollection<Order>(COL.orders, (l) => cb([...l].sort((a, b) => (b.assignedAt ?? b.createdAt) - (a.assignedAt ?? a.createdAt))), where('riderId', '==', riderId)),
+
+    async register(input) {
+      await authReady;
+      const name = input.name.trim();
+      const phone = input.phone.replace(/\D/g, '');
+      const ePhone = input.emergencyPhone.replace(/\D/g, '');
+      if (name.length < 2) throw new ServiceError('Enter your full name.');
+      if (!/^[6-9]\d{9}$/.test(phone)) throw new ServiceError('Enter a valid 10-digit mobile number.');
+      if (!/^\S+@\S+\.\S+$/.test(input.email.trim())) throw new ServiceError('That email address doesn’t look right.');
+      if (input.password.length < 8) throw new ServiceError('Choose a password with at least 8 characters.');
+      if (input.idNumber.trim().length < 4) throw new ServiceError('Enter your ID number so the store can verify you.');
+      if ((input.vehicle === 'bike' || input.vehicle === 'scooter') && !input.vehicleNumber?.trim()) throw new ServiceError('Enter your vehicle number plate.');
+      if (input.emergencyName.trim().length < 2 || !/^[6-9]\d{9}$/.test(ePhone)) throw new ServiceError('Add an emergency contact with a valid mobile number.');
+      let uidNew: string;
+      try {
+        uidNew = (await createUserWithEmailAndPassword(auth, input.email.trim().toLowerCase(), input.password)).user.uid;
+      } catch (e) {
+        throw new ServiceError(authErrorText((e as { code?: string }).code));
+      }
+      const rider: Rider = {
+        id: uidNew, name, phone, email: input.email.trim().toLowerCase(), vehicle: input.vehicle,
+        vehicleNumber: input.vehicleNumber?.trim().toUpperCase(), idType: input.idType, idNumber: input.idNumber.trim(),
+        emergencyName: input.emergencyName.trim(), emergencyPhone: ePhone, area: input.area?.trim() || undefined, photo: input.photo,
+        status: 'pending', online: false, createdAt: Date.now()
+      };
+      await setDoc(doc(firestore, COL.riders, uidNew), rider);
+      return rider;
+    },
+
+    async login(email, password) {
+      await authReady;
+      let id: string;
+      try {
+        id = (await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password)).user.uid;
+      } catch (e) {
+        throw new ServiceError(authErrorText((e as { code?: string }).code));
+      }
+      const snap = await getDoc(doc(firestore, COL.riders, id));
+      if (!snap.exists()) {
+        await signOut(auth);
+        await signInAnonymously(auth);
+        throw new ServiceError('No rider account uses this email. Register first.');
+      }
+      return snap.data() as Rider;
+    },
+
+    async logout() {
+      await signOut(auth);
+      await signInAnonymously(auth);
+    },
+
+    async setStatus(id, status, reason) {
+      await authed(async () => {
+        const now = Date.now();
+        await updateDoc(doc(firestore, COL.riders, id), {
+          status, statusReason: reason?.trim() || null, updatedAt: now,
+          ...(status === 'approved' ? { approvedAt: now } : { online: false })
+        });
+      });
+    },
+
+    async setOnline(id, online) {
+      await authed(() => updateDoc(doc(firestore, COL.riders, id), { online, updatedAt: Date.now() }));
+    }
+  },
+
+  wallet: {
+    watchTopups: (cb) => watchCollection<WalletTopup>(COL.topups, (l) => cb([...l].sort((a, b) => b.createdAt - a.createdAt))),
+    watchUserTopups: (userId, cb) => watchCollection<WalletTopup>(COL.topups, (l) => cb([...l].sort((a, b) => b.createdAt - a.createdAt)), where('userId', '==', userId)),
+    watchUserTxns: (userId, cb) => watchCollection<WalletTxn>(COL.txns, (l) => cb([...l].sort((a, b) => b.at - a.at)), where('userId', '==', userId)),
+    async createTopup(userId, amount) {
+      return authed(async () => {
+        if (!Number.isInteger(amount) || amount < 10 || amount > 5000) throw new ServiceError('Add between ₹10 and ₹5000.');
+        const cSnap = await getDoc(doc(firestore, COL.customers, userId));
+        if (!cSnap.exists()) throw new ServiceError('Log in again to add money.', 'auth');
+        const c = cSnap.data() as Customer;
+        let code = '';
+        for (let i = 0; i < 30; i++) {
+          const cand = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+          const hit = await getDocs(query(collection(firestore, COL.topups), where('code', '==', cand)));
+          if (hit.empty) { code = cand; break; }
+        }
+        if (!code) throw new ServiceError('Could not start the top-up, try again.');
+        const topup: WalletTopup = { id: uid('top'), userId, customerName: c.name, phone: c.phone, amount, code, status: 'pending', createdAt: Date.now() };
+        await setDoc(doc(firestore, COL.topups, topup.id), topup);
+        return topup;
+      });
+    },
+    async confirmTopup(id) {
+      await authed(async () => {
+        await runTransaction(firestore, async (tx) => {
+          const tRef = doc(firestore, COL.topups, id);
+          const tSnap = await tx.get(tRef);
+          if (!tSnap.exists()) throw new ServiceError('Top-up not found.');
+          const t = tSnap.data() as WalletTopup;
+          if (t.status !== 'pending') throw new ServiceError(`This top-up is already ${t.status}.`);
+          const cRef = doc(firestore, COL.customers, t.userId);
+          const cSnap = await tx.get(cRef);
+          if (!cSnap.exists()) throw new ServiceError('Customer account not found.');
+          const now = Date.now();
+          tx.update(cRef, { walletBalance: ((cSnap.data() as Customer).walletBalance ?? 0) + t.amount });
+          tx.update(tRef, { status: 'paid', paidAt: now });
+          const txn: WalletTxn = { id: uid('wtx'), userId: t.userId, type: 'topup', amount: t.amount, note: 'Added via GPay', at: now };
+          tx.set(doc(firestore, COL.txns, txn.id), txn);
+          const n: AppNotification = {
+            id: `wal_${id}`, type: 'order', title: `₹${t.amount} added to your wallet 💰`,
+            body: 'Your top-up is confirmed. Use it at checkout.', at: now, audience: { kind: 'user', userId: t.userId }, link: '/wallet'
+          };
+          tx.set(doc(firestore, COL.feed, n.id), n);
+        });
+      });
+    },
+    async cancelTopup(id, userId) {
+      await authed(async () => {
+        const ref = doc(firestore, COL.topups, id);
+        const snap = await getDoc(ref);
+        if (!snap.exists() || (snap.data() as WalletTopup).userId !== userId) throw new ServiceError('Top-up not found.');
+        if ((snap.data() as WalletTopup).status !== 'pending') throw new ServiceError('This top-up was already confirmed.');
+        await updateDoc(ref, { status: 'cancelled' });
+      });
+    }
+  },
+
   auth: {
     async requestOtp(phone) {
       await authReady;
       if (!/^[6-9]\d{9}$/.test(phone)) throw new ServiceError('Enter a valid 10-digit mobile number.');
-      const devCode = String(Math.floor(1000 + Math.random() * 9000));
-      sessionStorage.setItem(`no:otp:${phone}`, devCode);
-      return { devCode };
+      // Local development only: the seeded demo account skips SMS so the app is testable without a phone.
+      if (import.meta.env.DEV && phone === APP.demoUserPhone) {
+        const devCode = String(Math.floor(100000 + Math.random() * 900000));
+        sessionStorage.setItem(`no:otp:${phone}`, devCode);
+        return { devCode };
+      }
+      if (isNative) {
+        try {
+          await sendNativeOtp(phone);
+        } catch (e) {
+          throw new ServiceError(otpSendError((e as { code?: string }).code), 'otp-send');
+        }
+        return {};
+      }
+      recaptcha?.clear();
+      document.getElementById('recaptcha-container')?.remove();
+      const holder = document.createElement('div');
+      holder.id = 'recaptcha-container';
+      document.body.appendChild(holder);
+      recaptcha = new RecaptchaVerifier(auth, holder, { size: 'invisible' });
+      try {
+        smsConfirmation = await signInWithPhoneNumber(auth, `+91${phone}`, recaptcha);
+      } catch (e) {
+        recaptcha.clear();
+        recaptcha = null;
+        throw new ServiceError(otpSendError((e as { code?: string }).code), 'otp-send');
+      }
+      return {};
     },
     async verifyOtp(phone, code) {
       await authReady;
-      const expected = sessionStorage.getItem(`no:otp:${phone}`);
-      if (!expected || expected !== code) throw new ServiceError('That code doesn’t match. Check and try again.', 'otp');
-      sessionStorage.removeItem(`no:otp:${phone}`);
+      const demoCode = sessionStorage.getItem(`no:otp:${phone}`);
+      if (import.meta.env.DEV && demoCode) {
+        if (demoCode !== code) throw new ServiceError('That code doesn’t match. Check and try again.', 'otp');
+        sessionStorage.removeItem(`no:otp:${phone}`);
+      } else if (isNative) {
+        if (!nativeVerificationId) throw new ServiceError('Request a new code first.', 'otp');
+        try {
+          await signInWithCredential(auth, PhoneAuthProvider.credential(nativeVerificationId, code));
+        } catch (e) {
+          const c = (e as { code?: string }).code;
+          if (c === 'auth/code-expired') throw new ServiceError('That code expired. Request a new one.', 'otp');
+          throw new ServiceError('That code doesn’t match. Check and try again.', 'otp');
+        }
+        nativeVerificationId = null;
+      } else {
+        if (!smsConfirmation) throw new ServiceError('Request a new code first.', 'otp');
+        try {
+          await smsConfirmation.confirm(code);
+        } catch (e) {
+          const c = (e as { code?: string }).code;
+          if (c === 'auth/code-expired') throw new ServiceError('That code expired. Request a new one.', 'otp');
+          throw new ServiceError('That code doesn’t match. Check and try again.', 'otp');
+        }
+        smsConfirmation = null;
+      }
       const snap = await getDoc(doc(firestore, COL.customers, phone));
       const customer = snap.exists() ? (snap.data() as Customer) : null;
       if (customer?.blocked) throw new ServiceError('This account is blocked. Contact support.', 'blocked');
       return { customer };
     },
     async adminLogin(email, password) {
-      const a = APP.admins.find((x) => x.email === email.trim().toLowerCase() && x.password === password);
-      if (!a) throw new ServiceError('Email or password is wrong.');
-      return { name: a.name, email: a.email, role: a.role };
+      await authReady;
+      let uid: string;
+      try {
+        uid = (await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password)).user.uid;
+      } catch {
+        throw new ServiceError('Email or password is wrong.');
+      }
+      const admin = APP.adminAccounts.find((a) => a.uid === uid);
+      if (!admin) {
+        await signOut(auth);
+        await signInAnonymously(auth);
+        throw new ServiceError('This account doesn’t have store access.');
+      }
+      return { name: admin.name, email: email.trim().toLowerCase(), role: admin.role };
+    },
+    async adminLogout() {
+      await signOut(auth);
+      await signInAnonymously(auth);
     }
   }
 };

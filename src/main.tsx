@@ -9,6 +9,7 @@ import { MotionConfig } from 'framer-motion';
 import { registerSW } from 'virtual:pwa-register';
 
 import '@/shared/lib/firebase';
+import { isNative } from '@/shared/lib/native';
 import { services } from '@/shared/services';
 import { ConfirmHost } from '@/shared/ui';
 import { BootScreen } from '@/shared/ui/BootScreen';
@@ -44,6 +45,10 @@ const UserApp = lazy(
   () => import('@/apps/user/UserApp')
 );
 
+const RiderApp = lazy(
+  () => import('@/apps/rider/RiderApp')
+);
+
 const AdminApp = lazy(
   () => import('@/apps/admin/AdminApp')
 );
@@ -53,7 +58,8 @@ const AdminApp = lazy(
  */
 if (
   'serviceWorker' in navigator &&
-  import.meta.env.PROD
+  import.meta.env.PROD &&
+  !isNative
 ) {
   registerSW({
     immediate: true,
@@ -80,6 +86,12 @@ createRoot(
             <Route
               path="/admin/*"
               element={<AdminApp />}
+            />
+
+            {/* Rider application */}
+            <Route
+              path="/rider/*"
+              element={<RiderApp />}
             />
 
             {/* User application */}

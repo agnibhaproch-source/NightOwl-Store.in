@@ -22,12 +22,15 @@ import {
 import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
 
 import { auth } from '@/shared/lib/firebase';
+import { isNative } from '@/shared/lib/native';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 
 import {
   services,
@@ -52,6 +55,7 @@ import type {
   Customer,
 } from '@/shared/types';
 
+import { isIOS, isStandalone } from '../lib/install';
 import { useSession } from '../store/session';
 import { useCart } from '../store/cart';
 
@@ -68,6 +72,8 @@ import {
 type AuthMode = 'signin' | 'signup';
 
 type LoginMethod = 'email' | 'phone';
+
+const OTP_LEN = 6;
 
 type PhoneStep =
   | 'phone'
@@ -103,7 +109,7 @@ function OtpBoxes({
     character: string,
   ) => {
     const digits = value
-      .padEnd(4, ' ')
+      .padEnd(OTP_LEN, ' ')
       .split('');
 
     digits[index] = character || ' ';
@@ -115,7 +121,7 @@ function OtpBoxes({
     onChange(next);
 
     if (
-      next.replace(/\s/g, '').length === 4
+      next.replace(/\s/g, '').length === OTP_LEN
     ) {
       onComplete(next);
     }
@@ -130,7 +136,7 @@ function OtpBoxes({
       is entered, which is much cheaper.
     */
     <motion.div
-      className="flex justify-center gap-3"
+      className="flex justify-center gap-2 sm:gap-3"
       animate={
         error
           ? {
@@ -151,9 +157,9 @@ function OtpBoxes({
         duration: 0.35,
       }}
       role="group"
-      aria-label="4-digit verification code"
+      aria-label="6-digit verification code"
     >
-      {[0, 1, 2, 3].map((index) => (
+      {Array.from({ length: OTP_LEN }, (_, index) => (
         <input
           key={index}
           ref={(element) => {
@@ -179,18 +185,18 @@ function OtpBoxes({
 
             if (input.length > 1) {
               const all =
-                input.slice(0, 4);
+                input.slice(0, OTP_LEN);
 
               onChange(all);
 
               refs.current[
                 Math.min(
-                  3,
+                  OTP_LEN - 1,
                   all.length,
                 )
               ]?.focus();
 
-              if (all.length === 4) {
+              if (all.length === OTP_LEN) {
                 onComplete(all);
               }
 
@@ -201,7 +207,7 @@ function OtpBoxes({
 
             if (
               input &&
-              index < 3
+              index < OTP_LEN - 1
             ) {
               refs.current[
                 index + 1
@@ -224,7 +230,7 @@ function OtpBoxes({
               event.clipboardData
                 .getData('text')
                 .replace(/\D/g, '')
-                .slice(0, 4);
+                .slice(0, OTP_LEN);
 
             if (!pasted) {
               return;
@@ -234,12 +240,12 @@ function OtpBoxes({
 
             onChange(pasted);
 
-            if (pasted.length === 4) {
+            if (pasted.length === OTP_LEN) {
               onComplete(pasted);
             }
           }}
           className={cn(
-            'h-16 w-14 rounded-2xl border-2 bg-surface2/60 text-center font-display text-3xl font-extrabold outline-none transition-colors',
+            'h-14 w-11 rounded-2xl border-2 sm:h-16 sm:w-14 bg-surface2/60 text-center font-display text-2xl font-extrabold outline-none sm:text-3xl transition-colors',
             'focus:border-violet',
             error
               ? 'border-pink'
@@ -356,7 +362,7 @@ export default function Login() {
     useState<AuthMode>('signin');
 
   const [method, setMethod] =
-    useState<LoginMethod>('email');
+    useState<LoginMethod>(isIOS() && isStandalone() ? 'phone' : 'email');
 
 
   /* =======================================================
@@ -533,18 +539,43 @@ export default function Login() {
       setBusy(true);
 
       try {
-        const provider =
-          new GoogleAuthProvider();
+        let result;
 
-        provider.setCustomParameters({
-          prompt: 'select_account',
-        });
+        if (isNative) {
+          // Google blocks OAuth inside embedded WebViews, so ask the OS for the
+          // Google account and hand the resulting token to the web SDK.
+          const native =
+            await FirebaseAuthentication.signInWithGoogle();
 
-        const result =
-          await signInWithPopup(
-            auth,
-            provider,
-          );
+          const idToken =
+            native.credential?.idToken;
+
+          if (!idToken) {
+            throw new Error('Google did not return a token.');
+          }
+
+          result =
+            await signInWithCredential(
+              auth,
+              GoogleAuthProvider.credential(
+                idToken,
+                native.credential?.accessToken,
+              ),
+            );
+        } else {
+          const provider =
+            new GoogleAuthProvider();
+
+          provider.setCustomParameters({
+            prompt: 'select_account',
+          });
+
+          result =
+            await signInWithPopup(
+              auth,
+              provider,
+            );
+        }
 
         const user =
           result.user;
@@ -795,13 +826,21 @@ export default function Login() {
 
         setResendIn(30);
 
-        toast({
-          title: `Demo OTP: ${result.devCode}`,
-          body:
-            'No SMS is sent in this demo. Type or paste this code.',
-          emoji: '💬',
-          duration: 9000,
-        });
+        toast(
+          result.devCode
+            ? {
+                title: `Demo OTP: ${result.devCode}`,
+                body: 'Dev-only demo account, no SMS is sent. Type or paste this code.',
+                emoji: '💬',
+                duration: 9000,
+              }
+            : {
+                title: 'Code sent',
+                body: `We texted a 6-digit code to +91 ${phone}.`,
+                emoji: '💬',
+                duration: 5000,
+              },
+        );
       } catch (otpError) {
         setError(
           errorMessage(otpError),
@@ -821,7 +860,7 @@ export default function Login() {
       verificationCode = code,
     ) => {
       if (
-        verificationCode.length !== 4 ||
+        verificationCode.length !== OTP_LEN ||
         busy
       ) {
         return;
@@ -1184,7 +1223,7 @@ export default function Login() {
               block
               loading={busy}
               disabled={
-                code.length !== 4
+                code.length !== OTP_LEN
               }
               onClick={() =>
                 void verifyOtp()
@@ -2308,18 +2347,20 @@ export default function Login() {
                         DEMO ACCOUNT
                        ----------------------------------------- */}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPhone(
-                          APP.demoUserPhone,
-                        )
-                      }
-                      className="text-sm font-semibold text-violet hover:underline"
-                    >
-                      Use demo account (
-                      {APP.demoUserPhone})
-                    </button>
+                    {import.meta.env.DEV && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPhone(
+                            APP.demoUserPhone,
+                          )
+                        }
+                        className="text-sm font-semibold text-violet hover:underline"
+                      >
+                        Use demo account (
+                        {APP.demoUserPhone})
+                      </button>
+                    )}
 
 
                     {/* -----------------------------------------

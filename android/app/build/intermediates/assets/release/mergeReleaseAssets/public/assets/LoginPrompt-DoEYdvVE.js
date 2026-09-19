@@ -1,1 +1,0 @@
-import{j as t}from"./motion-phs_KTcB.js";import{a3 as s,q as e}from"./index-DmsBMrBR.js";import{u as m,e as p}from"./react-CuA7wYB5.js";function g({emoji:o,title:a,body:n}){const i=m(),r=p();return t.jsx(s,{emoji:o,title:a,body:n,action:t.jsx(e,{variant:"primary",size:"lg",onClick:()=>i("/login",{state:{from:r.pathname}}),children:"Log in with phone"})})}export{g as L};

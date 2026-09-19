@@ -1,14 +1,99 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Every tab (customer or admin) signs in anonymously on load (see
-    // src/shared/lib/firebase.ts), so `request.auth != null` just means
-    // "opened through the app" — it does not distinguish admin from
-    // customer. That's a deliberate, disclosed tradeoff for now: it keeps
-    // the database closed to the open internet while the app has no real
-    // customer/admin identity system to key stricter per-document rules on.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    function signedIn() { return request.auth != null; }
+    // Store owner accounts. Anyone else can browse and order, but cannot change store data.
+    function isAdmin() { return signedIn() && request.auth.uid in ['0HRXjQ4GK6XdKkdJHm1tNVa6JyG2']; }
+    // A rider is any signed-in account that has a rider profile (riders/<their uid>).
+    function isRider() { return signedIn() && exists(/databases/$(database)/documents/riders/$(request.auth.uid)); }
+    function riderApproved() { return isRider() && get(/databases/$(database)/documents/riders/$(request.auth.uid)).data.status == 'approved'; }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    // Catalogue + store config: readable by every visitor, writable by the owner only.
+    // Customers may only touch stock/popularity (placing or cancelling an order moves stock).
+    match /products/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn() && changedOnly(['stock', 'popularity']));
     }
+    match /coupons/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn() && changedOnly(['used']));
+    }
+    match /categories/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /banners/{id}    { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /settings/{id}   { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /broadcasts/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /meta/{id}       { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Wallet money: only the owner can ever ADD to a balance (top-up confirmation or refund).
+    match /customers/{id} {
+      allow read: if signedIn();
+      allow create: if isAdmin() || (signedIn() && request.resource.data.get('walletBalance', 0) == 0);
+      allow update: if isAdmin() || (signedIn() && request.resource.data.get('walletBalance', 0) <= resource.data.get('walletBalance', 0));
+      allow delete: if isAdmin();
+    }
+    match /walletTopups/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.status == 'pending';
+      allow update: if isAdmin() || (signedIn() && changedOnly(['status']) && request.resource.data.status == 'cancelled' && resource.data.status == 'pending');
+      allow delete: if isAdmin();
+    }
+    match /walletTxns/{id} {
+      allow read: if signedIn();
+      allow create: if isAdmin() || (signedIn() && request.resource.data.type == 'spend');
+      allow update, delete: if false;
+    }
+
+    // Orders and alerts flow between customers and the store.
+    // Riders: registration is self-service, but approval is the owner's decision. Only the owner and the rider can read a profile.
+    match /riders/{id} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == id);
+      allow create: if signedIn() && request.auth.uid == id
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.status == 'pending' && request.resource.data.online == false;
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == id
+        && changedOnly(['name', 'phone', 'vehicle', 'vehicleNumber', 'area', 'photo', 'emergencyName', 'emergencyPhone', 'online', 'updatedAt'])
+        && (!('online' in request.resource.data.diff(resource.data).affectedKeys()) || resource.data.status == 'approved'));
+      allow delete: if isAdmin();
+    }
+
+    // The customer's delivery code lives here. Riders cannot read it; the orders rule below compares against it at handover.
+    match /orderSecrets/{id} {
+      allow read: if isAdmin() || (signedIn() && !isRider());
+      allow create: if signedIn() && !isRider();
+      allow update, delete: if isAdmin();
+    }
+
+    match /orders/{id} {
+      allow read: if isAdmin() || (signedIn() && !isRider()) || (isRider() && resource.data.riderId == request.auth.uid);
+      allow create: if signedIn() && !isRider();
+      allow update: if isAdmin()
+        // Customers: pay, edit donation/receiver, rate, message the rider, or cancel. They can never advance an order.
+        || (signedIn() && !isRider()
+            && changedOnly(['bill', 'receiver', 'updatedAt', 'rating', 'paymentStatus', 'paidAt', 'paymentMode', 'status', 'history', 'cancelReason', 'cancelledBy', 'messages'])
+            && (request.resource.data.status == resource.data.status || request.resource.data.status == 'cancelled')
+            // A customer can only mark an order paid by really spending wallet money in the same write.
+            && (request.resource.data.paymentStatus == resource.data.paymentStatus || (
+                  resource.data.paymentStatus == 'pending' && request.resource.data.paymentStatus == 'paid'
+                  && request.resource.data.paymentMode == 'wallet' && request.resource.data.bill == resource.data.bill
+                  && get(/databases/$(database)/documents/customers/$(resource.data.userId)).data.get('walletBalance', 0) >= resource.data.bill.grandTotal
+                  && getAfter(/databases/$(database)/documents/customers/$(resource.data.userId)).data.get('walletBalance', 0)
+                       <= get(/databases/$(database)/documents/customers/$(resource.data.userId)).data.get('walletBalance', 0) - resource.data.bill.grandTotal)))
+        // The assigned rider: pick up, arrive, message, and deliver only with the customer's real delivery code.
+        || (riderApproved() && resource.data.riderId == request.auth.uid
+            && changedOnly(['status', 'history', 'updatedAt', 'pickedUpAt', 'arrivedAt', 'deliveredAt', 'messages', 'deliveryCode'])
+            && (
+              request.resource.data.status == resource.data.status
+              || (request.resource.data.status == 'out_for_delivery' && resource.data.status in ['accepted', 'packing'] && resource.data.get('paymentStatus', 'paid') != 'pending')
+              || (request.resource.data.status == 'delivered' && resource.data.status == 'out_for_delivery'
+                  && request.resource.data.deliveryCode == get(/databases/$(database)/documents/orderSecrets/$(id)).data.otp)
+            ));
+      allow delete: if isAdmin();
+    }
+    match /feed/{id}        { allow read, create: if signedIn(); allow update, delete: if isAdmin(); }
+    match /stockAlerts/{id} { allow read, write: if signedIn(); }
   }
 }

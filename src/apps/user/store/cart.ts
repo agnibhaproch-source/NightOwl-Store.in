@@ -6,6 +6,9 @@ interface CartState {
   couponCode: string | null;
   instructions: string;
   addressId: string | null;
+  /** The awaiting-payment order created for this cart, so revisiting checkout reuses it instead of duplicating. */
+  pendingOrderId: string | null;
+  setPendingOrder: (id: string | null) => void;
   add: (id: string, max: number) => 'added' | 'max';
   dec: (id: string) => void;
   remove: (id: string) => number;
@@ -23,6 +26,8 @@ export const useCart = create<CartState>()(
       couponCode: null,
       instructions: '',
       addressId: null,
+      pendingOrderId: null,
+      setPendingOrder: (pendingOrderId) => set({ pendingOrderId }),
       add: (id, max) => {
         const cur = get().lines[id] ?? 0;
         if (cur >= max) return 'max';
@@ -52,7 +57,7 @@ export const useCart = create<CartState>()(
       applyCoupon: (code) => set({ couponCode: code }),
       setInstructions: (instructions) => set({ instructions }),
       setAddress: (addressId) => set({ addressId }),
-      clear: () => set({ lines: {}, couponCode: null, instructions: '' })
+      clear: () => set({ lines: {}, couponCode: null, instructions: '', pendingOrderId: null })
     }),
     { name: 'no:cart' }
   )

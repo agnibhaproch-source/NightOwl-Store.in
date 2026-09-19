@@ -121,6 +121,38 @@ const NEW_IDS = new Set([
   'weikfield-cheese-macaroni-cup', 'amul-kool-cafe', 'elite-choco-brownie', 'galaxy-smooth-milk', 'sting-energy-berry-blast'
 ]);
 
+/**
+ * Real product photos, sourced from Open Food Facts and matched by brand.
+ * Not every product has a confidently-matched real photo; those fall back
+ * to the illustrated PackShot art.
+ */
+const REAL_IMAGES: Record<string, string> = {
+  'maggi-masala-noodles-family-pack': 'https://images.openfoodfacts.org/images/products/890/105/890/4697/front_en.3.400.jpg',
+  'maggi-hot-heads-barbeque-pepper': 'https://images.openfoodfacts.org/images/products/955/600/130/2656/front_en.3.400.jpg',
+  'maggi-atta-noodles-masala': 'https://images.openfoodfacts.org/images/products/890/105/801/1067/front_en.3.400.jpg',
+  'sunfeast-yippee-magic-masala': 'https://images.openfoodfacts.org/images/products/890/172/518/1673/front_en.3.400.jpg',
+  "ching-s-schezwan-instant-noodles": 'https://images.openfoodfacts.org/images/products/890/159/586/2962/front_en.24.400.jpg',
+  'wai-wai-veg-masala-noodles': 'https://images.openfoodfacts.org/images/products/890/601/303/0688/front_en.5.400.jpg',
+  'knorr-soupy-noodles-mast-masala': 'https://images.openfoodfacts.org/images/products/868/313/005/0262/front_en.3.400.jpg',
+  'nissin-cup-noodles-mazedaar-masala': 'https://images.openfoodfacts.org/images/products/480/001/655/2250/front_en.3.400.jpg',
+  "lay-s-india-s-magic-masala": 'https://images.openfoodfacts.org/images/products/890/149/110/1844/front.8.400.jpg',
+  'kurkure-masala-munch': 'https://images.openfoodfacts.org/images/products/890/149/110/0519/front_en.29.400.jpg',
+  'bingo-mad-angles-achaari-masti': 'https://images.openfoodfacts.org/images/products/890/172/519/8329/front_en.5.400.jpg',
+  'doritos-nacho-cheese': 'https://images.openfoodfacts.org/images/products/002/840/009/0896/front.5.400.jpg',
+  'pringles-sour-cream-and-onion': 'https://images.openfoodfacts.org/images/products/505/399/016/8217/front_en.8.400.jpg',
+  'balaji-wafers-masala-masti': 'https://images.openfoodfacts.org/images/products/890/601/050/0276/front_en.3.400.jpg',
+  'parle-monaco-classic': 'https://images.openfoodfacts.org/images/products/890/171/912/3801/front_en.3.400.jpg',
+  'unibic-choco-chip-cookies': 'https://images.openfoodfacts.org/images/products/890/600/907/2678/front_en.5.400.jpg',
+  'britannia-gobbles-choco-cake': 'https://images.openfoodfacts.org/images/products/890/106/336/2857/front_en.7.400.jpg',
+  limca: 'https://images.openfoodfacts.org/images/products/890/176/405/1128/front_en.18.400.jpg',
+  'pepsi-can': 'https://images.openfoodfacts.org/images/products/931/382/000/1470/front_en.3.400.jpg',
+  'red-bull-energy-drink': 'https://images.openfoodfacts.org/images/products/900/249/020/5973/front.24.400.jpg',
+  'sting-energy-berry-blast': 'https://images.openfoodfacts.org/images/products/890/208/049/5023/front_en.3.400.jpg',
+  'maggi-pazzta-masala-penne': 'https://images.openfoodfacts.org/images/products/490/141/089/1836/front_en.3.400.jpg',
+  'cadbury-5-star': 'https://images.openfoodfacts.org/images/products/762/220/149/4476/front_en.3.400.jpg',
+  'snickers-peanut': 'https://images.openfoodfacts.org/images/products/930/068/206/1193/front_en.3.400.jpg'
+};
+
 export function buildProducts(now: number): Product[] {
   const rand = mulberry32(7);
   const out: Product[] = [];
@@ -135,7 +167,8 @@ export function buildProducts(now: number): Product[] {
         veg, active: true, tags,
         popularity: Math.round(20 + rand() * 80),
         createdAt: NEW_IDS.has(id) ? now - Math.round(rand() * 3 * DAY) : now - Math.round((20 + rand() * 120) * DAY),
-        color, shape, description: DESC[categoryId]!
+        color, shape, description: DESC[categoryId]!,
+        image: REAL_IMAGES[id]
       });
     }
   }
@@ -275,6 +308,7 @@ export function buildOrders(now: number, products: Product[], customers: Custome
       status, createdAt, updatedAt: history[history.length - 1]!.at, history,
       etaMinutes: 10 + Math.floor(rand() * 6),
       paymentMode: 'pay_on_delivery',
+      paymentStatus: 'paid',
       ...(status === 'cancelled'
         ? { cancelReason: pick(['Item went out of stock', 'Customer not reachable', 'Changed my mind']), cancelledBy: pick(['user', 'store'] as const) }
         : {})

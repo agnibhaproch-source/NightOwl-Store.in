@@ -1,4 +1,6 @@
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '@/shared/lib/firebase';
 import { motion } from 'framer-motion';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from '@/shared/ui';
@@ -9,6 +11,7 @@ import { useAdmin } from './store/session';
 import { AdminLayout } from './components/Layout';
 import { CommandPalette } from './components/CommandPalette';
 import { OrderDrawer } from './components/OrderDrawer';
+import { AssignRiderSheet } from './components/AssignRiderSheet';
 import { NewOrderWatcher } from './components/NewOrderWatcher';
 import { ProductEditorHost } from './components/ProductEditor';
 import Login from './pages/Login';
@@ -16,6 +19,8 @@ import Login from './pages/Login';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Orders = lazy(() => import('./pages/Orders'));
 const Products = lazy(() => import('./pages/Products'));
+const WalletTopups = lazy(() => import('./pages/WalletTopups'));
+const Riders = lazy(() => import('./pages/Riders'));
 const Categories = lazy(() => import('./pages/Categories'));
 const Combos = lazy(() => import('./pages/Combos'));
 const StoreControls = lazy(() => import('./pages/StoreControls'));
@@ -31,8 +36,24 @@ function OwnerOnly({ children }: { children: JSX.Element }) {
   return owner ? children : <Navigate to="/admin" replace />;
 }
 
+/** True only while Firebase itself says the signed-in user is a store admin (a forged local session doesn't count). */
+function useIsRealAdmin() {
+  const [state, setState] = useState<'checking' | 'yes' | 'no'>('checking');
+  useEffect(
+    () =>
+      onAuthStateChanged(auth, (u) => {
+        if (!u) return;
+        setState(u.isAnonymous || !APP.adminAccounts.some((a) => a.uid === u.uid) ? 'no' : 'yes');
+      }),
+    []
+  );
+  return state;
+}
+
 export default function AdminApp() {
-  const session = useAdmin((s) => s.session);
+  const storedSession = useAdmin((s) => s.session);
+  const realAdmin = useIsRealAdmin();
+  const session = realAdmin === 'yes' ? storedSession : null;
   const location = useLocation();
   useLenis(true);
 
@@ -62,6 +83,8 @@ export default function AdminApp() {
               <Route index element={<Dashboard />} />
               <Route path="orders" element={<Orders />} />
               <Route path="products" element={<Products />} />
+              <Route path="wallet" element={<WalletTopups />} />
+              <Route path="riders" element={<Riders />} />
               <Route path="categories" element={<OwnerOnly><Categories /></OwnerOnly>} />
               <Route path="combos" element={<OwnerOnly><Combos /></OwnerOnly>} />
               <Route path="store" element={<OwnerOnly><StoreControls /></OwnerOnly>} />
@@ -78,6 +101,7 @@ export default function AdminApp() {
       </AdminLayout>
       <CommandPalette />
       <OrderDrawer />
+      <AssignRiderSheet />
       <ProductEditorHost />
       <NewOrderWatcher />
       <Toaster />

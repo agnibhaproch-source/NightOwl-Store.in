@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { services } from '../services';
 import { defaultSettings } from '../data/seed';
 import type {
-  AppNotification, Banner, BroadcastLog, Category, Coupon, Customer, Order, Product, StockAlert, StoreSettings, Unsub
+  AppNotification, Banner, BroadcastLog, Category, Coupon, Customer, Order, Product, StockAlert, StoreSettings, Unsub, WalletTopup, WalletTxn, Rider
 } from '../types';
 
 /** Subscribes to a live query. Returns [value, loading]. */
@@ -13,6 +13,8 @@ export function useLive<T>(subscribe: ((cb: (v: T) => void) => Unsub) | null, in
       setState({ v: initial, loading: false });
       return;
     }
+    // A new subscription (e.g. a different user id) starts out loading; never reuse the previous result.
+    setState({ v: initial, loading: true });
     return subscribe((v) => setState({ v, loading: false }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
@@ -45,3 +47,16 @@ export const useUserOrders = (userId: string | null) =>
 
 export const useCustomer = (userId: string | null) =>
   useLive<Customer | null>(userId ? (cb) => services.customers.watchCustomer(userId, cb) : null, null, [userId]);
+
+const WT: WalletTopup[] = [];
+const WX: WalletTxn[] = [];
+export const useTopups = () => useLive(services.wallet.watchTopups, WT);
+export const useUserTopups = (userId: string | null) =>
+  useLive<WalletTopup[]>(userId ? (cb) => services.wallet.watchUserTopups(userId, cb) : null, WT, [userId]);
+export const useUserTxns = (userId: string | null) =>
+  useLive<WalletTxn[]>(userId ? (cb) => services.wallet.watchUserTxns(userId, cb) : null, WX, [userId]);
+
+const RD: Rider[] = [];
+export const useRiders = () => useLive(services.riders.watchRiders, RD);
+export const useRiderOrders = (riderId: string | null) =>
+  useLive<Order[]>(riderId ? (cb) => services.riders.watchRiderOrders(riderId, cb) : null, O, [riderId]);

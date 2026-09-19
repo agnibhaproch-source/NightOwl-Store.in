@@ -7,7 +7,7 @@ import { DAY, latestNight } from '@/shared/lib/time';
 import { fmtDate, inr, toDateInput } from '@/shared/lib/format';
 import { toCSV, downloadFile } from '@/shared/lib/files';
 import { useSettings } from '@/shared/hooks/live';
-import type { Order } from '@/shared/types';
+import { isAbandoned, type Order } from '@/shared/types';
 import { PageTitle, Panel } from '../components/Layout';
 import { Kpi, tooltipStyle, useChartColors } from '../components/charts';
 
@@ -37,9 +37,10 @@ export default function Reports() {
 
   const data = useMemo(() => {
     const inR = (o: Order) => o.createdAt >= range[0] && o.createdAt < range[1];
-    const all = orders.filter(inR);
+    const all = orders.filter(inR).filter((o) => !isAbandoned(o));
     const ok = all.filter((o) => o.status !== 'cancelled');
-    const revenue = ok.reduce((a, o) => a + o.bill.grandTotal, 0);
+    const revenue = ok.reduce((a, o) => a + o.bill.grandTotal - (o.bill.donation ?? 0), 0);
+    const donations = ok.reduce((a, o) => a + (o.bill.donation ?? 0), 0);
     const itemRevenue = ok.reduce((a, o) => a + o.bill.itemTotal, 0);
     const byId = new Map(products.map((p) => [p.id, p]));
     const cogs = ok.reduce((a, o) => a + o.items.reduce((s, i) => s + (byId.get(i.productId)?.cost ?? i.price * 0.75) * i.qty, 0), 0);
@@ -82,7 +83,7 @@ export default function Reports() {
     }));
 
     return {
-      all, ok, revenue, itemRevenue, cogs, fees, discounts, units, nights, hostels,
+      all, ok, revenue, donations, itemRevenue, cogs, fees, discounts, units, nights, hostels,
       products: [...prod.entries()].map(([id, v]) => ({ id, ...v, profit: v.revenue - v.cost })).sort((a, b) => b.revenue - a.revenue),
       cats: [...catMap.entries()].map(([id, v]) => ({ id, name: cats.find((x) => x.id === id)?.name ?? 'Other', ...v })).sort((a, b) => b.revenue - a.revenue)
     };
@@ -151,7 +152,7 @@ export default function Reports() {
             <Kpi label="Orders" value={data.ok.length} icon={TrendingUp} tone="violet" delay={0.04} sub={`${data.all.length - data.ok.length} cancelled`} />
             <Kpi label="Avg order" value={inr(data.ok.length ? data.revenue / data.ok.length : 0)} icon={TrendingUp} tone="cyan" delay={0.08} />
             <Kpi label="Gross profit" value={inr(grossProfit)} icon={TrendingUp} tone="amber" delay={0.12} sub={`after ${inr(data.cogs)} cost of goods`} />
-            <Kpi label="Fees collected" value={inr(data.fees)} icon={TrendingUp} tone="pink" delay={0.16} sub={`${inr(data.discounts)} given as coupons`} />
+            <Kpi label="Fees collected" value={inr(data.fees)} icon={TrendingUp} tone="pink" delay={0.16} sub={`${inr(data.discounts)} coupons · ${inr(data.donations)} for Feeding India`} />
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-3">

@@ -11,6 +11,7 @@ import { services, errorMessage } from '@/shared/services';
 import { fmtDateTime, inr } from '@/shared/lib/format';
 import { fmtClock, MIN } from '@/shared/lib/time';
 import { APP } from '@/shared/config/app';
+import { isPaid } from '@/shared/types';
 import { useCatalog, useCurrentUser } from '../hooks';
 import { useUi } from '../store/ui';
 import { Page, PageHeader, Section } from '../components/Page';
@@ -18,6 +19,7 @@ import { BillSummary } from '../components/BillSummary';
 import { RateSheet, StatusBadge, Timeline, useReorder } from '../components/OrderBits';
 import { addressLine } from '../components/AddressForm';
 import { LoginPrompt } from '../components/LoginPrompt';
+import { RiderPanel } from '../components/RiderPanel';
 
 const HEADLINE: Record<string, string> = {
   placed: 'Sending it to the store…',
@@ -83,20 +85,24 @@ export default function OrderDetail() {
     );
 
   const active = o.status !== 'delivered' && o.status !== 'cancelled';
-  const cancelLeftMs = o.createdAt + APP.cancelWindowSeconds * 1000 - now;
-  const canCancel = o.status === 'placed' && cancelLeftMs > 0;
+  const unpaid = o.status === 'placed' && !isPaid(o);
+  const cancelLeftMs = (o.paidAt ?? o.createdAt) + APP.cancelWindowSeconds * 1000 - now;
+  const canCancel = o.status === 'placed' && !unpaid && o.paymentMode !== 'wallet' && cancelLeftMs > 0;
 
   const cancel = async () => {
     const { ok } = await confirmDialog({
-      title: 'Cancel this order?',
-      body: 'You already paid via UPI, so we’ll refund it manually. Contact support if the refund doesn’t show up.',
-      confirmLabel: 'Cancel order',
+      title: unpaid ? 'Cancel this payment?' : 'Cancel this order?',
+      body: unpaid
+        ? 'Your items will be released. If you already paid, don’t cancel. Wait for the store to confirm.'
+        : 'You already paid via UPI, so we’ll refund it manually. Contact support if the refund doesn’t show up.',
+      confirmLabel: unpaid ? 'Cancel payment' : 'Cancel order',
       tone: 'danger'
     });
     if (!ok) return;
     setCancelling(true);
     try {
-      await services.orders.cancelByUser(o.id, userId);
+      if (unpaid) await services.orders.cancelUnpaid(o.id, userId);
+      else await services.orders.cancelByUser(o.id, userId);
       toast({ title: 'Order cancelled', emoji: '👋' });
     } catch (e) {
       toast.error(errorMessage(e));
@@ -138,31 +144,39 @@ export default function OrderDetail() {
             <div className="relative mb-5 flex items-start justify-between gap-3">
               <div>
                 <StatusBadge status={o.status} />
-                <h2 className="mt-2 font-display text-[28px] font-extrabold leading-tight" aria-live="polite">{HEADLINE[o.status]}</h2>
+                <h2 className="mt-2 font-display text-[28px] font-extrabold leading-tight" aria-live="polite">{unpaid ? 'Waiting for payment confirmation' : HEADLINE[o.status]}</h2>
               </div>
               <div className="shrink-0 rounded-2xl bg-violet/10 px-3 py-2 text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-violet">Code</p>
                 <p className="price font-display text-lg font-extrabold tracking-[0.2em] text-violet">{o.shortCode}</p>
               </div>
             </div>
-            {active && (
+            {active && !unpaid && (
               <div className="relative mb-6 rounded-2xl bg-surface2/70 py-4">
-                <Eta createdAt={o.createdAt} minutes={o.etaMinutes} status={o.status} />
+                <Eta createdAt={o.paidAt ?? o.createdAt} minutes={o.etaMinutes} status={o.status} />
               </div>
             )}
             <Timeline order={o} />
-            {o.status === 'placed' && (
+            {unpaid && (
+              <div className="mt-5 space-y-2">
+                <Button block variant="primary" onClick={() => nav('/checkout')}>Go to payment</Button>
+                <Button block variant="outline" loading={cancelling} onClick={cancel}>Cancel payment</Button>
+              </div>
+            )}
+            {o.status === 'placed' && !unpaid && (
               canCancel ? (
                 <Button block className="mt-5" variant="outline" loading={cancelling} onClick={cancel}>
                   Cancel order · {Math.ceil(cancelLeftMs / 1000)}s left
                 </Button>
               ) : (
                 <p className="mt-5 rounded-2xl border border-line/60 bg-surface2/60 p-3 text-center text-[13px] text-muted">
-                  Cancellation window has closed. Call the store if something’s wrong.
+                  {o.paymentMode === 'wallet' ? 'Paid from your wallet. To cancel, call customer care and we’ll refund it to your wallet.' : 'Cancellation window has closed. Call the store if something’s wrong.'}
                 </p>
               )
             )}
           </Section>
+
+          {active && !unpaid && o.rider && <RiderPanel order={o} />}
 
           {o.status === 'delivered' && (
             <Section>
@@ -188,7 +202,7 @@ export default function OrderDetail() {
             <div className="space-y-3 text-sm">
               <p className="flex items-start gap-3"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-cyan" /><span><b>{o.address.label}</b><br /><span className="text-muted">{addressLine(o.address, settings.hostels)}</span></span></p>
               {o.instructions && <p className="flex items-start gap-3"><MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-muted" /><span className="text-muted">{o.instructions}</span></p>}
-              <p className="flex items-start gap-3"><Banknote className="mt-0.5 h-4 w-4 shrink-0 text-lime" /><span>Paid via UPI · <b>{inr(o.bill.grandTotal)}</b></span></p>
+              <p className="flex items-start gap-3"><Banknote className="mt-0.5 h-4 w-4 shrink-0 text-lime" /><span>{unpaid ? 'Payment pending' : o.paymentMode === 'wallet' ? 'Paid from wallet' : 'Paid via UPI'} · <b>{inr(o.bill.grandTotal)}</b></span></p>
             </div>
           </Section>
         </div>
